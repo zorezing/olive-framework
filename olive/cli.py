@@ -1,6 +1,8 @@
 import argparse
+import json
 from pathlib import Path
 
+from olive.events import EventBus, EventType
 from olive.state.parser import ProjectParser
 from olive.orchestrator.engine import Orchestrator
 from olive.workflow.fake_executor import FakeExecutor
@@ -90,17 +92,36 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Plan the project but do not execute any tasks",
     )
+    parser.add_argument(
+        "--events-log",
+        type=Path,
+        default=None,
+        help="Write the full event log as JSON lines to this path",
+    )
 
     args = parser.parse_args(argv)
 
+    events = EventBus()
+
     project = ProjectParser().parse(args.project)
+    events.publish(EventType.PROJECT_LOADED, name=project.name)
 
     print(f"Project: {project.name}")
     print(f"Goal: {project.goal}")
 
+    events.publish(EventType.PLANNER_STARTED, planner=args.planner)
     planner = build_planner(args.planner, args.ollama_url, args.planner_model)
     graph = planner.create_plan(project)
     graph.validate()
+
+    for task in graph.tasks:
+        events.publish(
+            EventType.TASK_CREATED,
+            task_id=task.id,
+            title=task.title,
+            dependencies=task.dependencies,
+        )
+    events.publish(EventType.PLAN_CREATED, task_count=len(graph.tasks))
 
     print(f"\nPlanned {len(graph.tasks)} task(s):")
     for task in graph.tasks:
@@ -111,23 +132,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"  {task.id}: {task.title}{deps}")
 
-    if args.dry_run:
-        return 0
+    exit_code = 0
 
-    workspace = args.workspace or args.project.resolve().parent
-    executor = build_executor(
-        args.executor, workspace, args.ollama_url, args.coder_model
-    )
+    if not args.dry_run:
+        workspace = args.workspace or args.project.resolve().parent
+        executor = build_executor(
+            args.executor, workspace, args.ollama_url, args.coder_model
+        )
 
-    orchestrator = Orchestrator(graph=graph, executor=executor)
-    orchestrator.run()
+        orchestrator = Orchestrator(graph=graph, executor=executor, events=events)
+        orchestrator.run()
 
-    if orchestrator.is_complete():
-        print("\nAll tasks completed.")
-        return 0
+        if orchestrator.is_complete():
+            print("\nAll tasks completed.")
+        else:
+            print("\nOrchestration finished with incomplete tasks.")
+            exit_code = 1
 
-    print("\nOrchestration finished with incomplete tasks.")
-    return 1
+    if args.events_log:
+        with args.events_log.open("w", encoding="utf-8") as handle:
+            for event in events.log:
+                handle.write(json.dumps(event.to_dict()) + "\n")
+
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+from olive.events import EventBus, EventType
 from olive.state.task import Task
 from olive.state.task_graph import TaskGraph
 from olive.state.task_state import TaskStatus
@@ -101,3 +102,55 @@ def test_all_tasks_are_completed():
         status == TaskStatus.COMPLETED
         for status in orchestrator.statuses.values()
     )
+
+
+def test_orchestrator_emits_task_and_completion_events():
+    graph = create_graph()
+    executor = FakeExecutor()
+    events = EventBus()
+
+    orchestrator = Orchestrator(
+        graph=graph,
+        executor=executor,
+        events=events,
+    )
+
+    orchestrator.run()
+
+    event_types = [event.type for event in events.log]
+
+    assert event_types.count(EventType.TASK_STARTED) == 4
+    assert event_types.count(EventType.TASK_COMPLETED) == 4
+    assert event_types[-1] == EventType.ORCHESTRATION_COMPLETED
+
+    for task_id in ("TASK-001", "TASK-002", "TASK-003", "TASK-004"):
+        started = event_types.index(
+            next(
+                e.type
+                for e in events.log
+                if e.type == EventType.TASK_STARTED
+                and e.payload["task_id"] == task_id
+            )
+        )
+        completed_events = [
+            i
+            for i, e in enumerate(events.log)
+            if e.type == EventType.TASK_COMPLETED
+            and e.payload["task_id"] == task_id
+        ]
+
+        assert completed_events
+        assert started < completed_events[0]
+
+
+def test_orchestrator_creates_its_own_bus_when_none_given():
+    graph = create_graph()
+    executor = FakeExecutor()
+
+    orchestrator = Orchestrator(graph=graph, executor=executor)
+    orchestrator.run()
+
+    assert isinstance(orchestrator.events, EventBus)
+    assert EventType.ORCHESTRATION_COMPLETED in [
+        event.type for event in orchestrator.events.log
+    ]
