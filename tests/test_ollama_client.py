@@ -63,3 +63,34 @@ def test_is_available_hits_the_tags_endpoint():
 
         args, _ = mock_get.call_args
         assert args[0] == "http://example.local:11434/api/tags"
+
+
+def _mock_chat_response():
+    return Mock(
+        raise_for_status=Mock(),
+        json=Mock(return_value={"message": {"content": "hello"}}),
+    )
+
+
+def test_chat_defaults_to_json_mode():
+    client = OllamaClient()
+
+    with patch("olive.workflow.ollama_client.requests.post") as mock_post:
+        mock_post.return_value = _mock_chat_response()
+
+        client.chat(model="m", system="s", prompt="p")
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["format"] == "json"
+
+
+def test_chat_json_mode_false_omits_format():
+    client = OllamaClient()
+
+    with patch("olive.workflow.ollama_client.requests.post") as mock_post:
+        mock_post.return_value = _mock_chat_response()
+
+        client.chat(model="m", system="s", prompt="p", json_mode=False)
+
+        _, kwargs = mock_post.call_args
+        assert "format" not in kwargs["json"]

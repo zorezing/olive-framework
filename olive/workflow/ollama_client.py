@@ -28,24 +28,41 @@ class OllamaClient:
         model: str,
         system: str,
         prompt: str,
+        json_mode: bool = True,
     ) -> str:
+        """Send a chat completion request.
+
+        ``json_mode`` requests Ollama's grammar-constrained JSON output
+        (``format: "json"``). This is reliable for well-behaved models,
+        but was observed live to make deepseek-r1:8b dramatically slower
+        (or not respond within an hour at all) -- the constrained decoder
+        appears to fight the model's own <think> reasoning tokens, which
+        don't fit a strict JSON grammar. Callers with their own robust
+        extraction (see olive.workflow.planner_output) can set this to
+        False and let the model think freely.
+        """
+
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system,
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            "stream": False,
+        }
+
+        if json_mode:
+            payload["format"] = "json"
+
         response = requests.post(
             f"{self.base_url}/api/chat",
-            json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": system,
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
-                "stream": False,
-                "format": "json",
-            },
+            json=payload,
             timeout=self.timeout,
         )
 
