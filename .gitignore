@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.venv312/
+*.egg-info/
+.dist/
+
+# Artifacts left behind by the OpenHands execution tests/scripts
+OPENHANDS_TEST.txt
+OPENHANDS_EXECUTOR_TEST.txt
+OLIVE_REAL_TASK_TEST.txt
+PROFILE_TEST.txt

@@ -1,0 +1,53 @@
+{
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "title": "Initialize project",
+      "description": "Create the base project structure and development configuration.",
+      "task_type": "infrastructure",
+      "dependencies": []
+    },
+    {
+      "id": "TASK-002",
+      "title": "Create FastAPI backend",
+      "description": "Create the backend application and establish the API structure.",
+      "task_type": "backend",
+      "dependencies": ["TASK-001"]
+    },
+    {
+      "id": "TASK-003",
+      "title": "Create React frontend",
+      "description": "Create the frontend application and establish the base UI structure.",
+      "task_type": "frontend",
+      "dependencies": ["TASK-001"]
+    },
+    {
+      "id": "TASK-004",
+      "title": "Implement authentication",
+      "description": "Implement user authentication for the application.",
+      "task_type": "backend",
+      "dependencies": ["TASK-002"]
+    },
+    {
+      "id": "TASK-005",
+      "title": "Build dashboard",
+      "description": "Implement the main network monitoring dashboard.",
+      "task_type": "frontend",
+      "dependencies": ["TASK-003", "TASK-004"]
+    },
+    {
+      "id": "TASK-006",
+      "title": "Add automated tests",
+      "description": "Create automated tests for the backend and frontend.",
+      "task_type": "testing",
+      "dependencies": ["TASK-004", "TASK-005"]
+    },
+    {
+      "id": "TASK-007",
+      "title": "Create Docker deployment",
+      "description": "Containerize the application for local deployment.",
+      "task_type": "infrastructure",
+      "dependencies": ["TASK-006"]
+    }
+  ]
+}

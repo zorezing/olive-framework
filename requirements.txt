@@ -1,0 +1,13 @@
+# Core
+requests>=2.31
+
+# Testing
+pytest>=7.4
+
+# Optional -- only required for real execution through OpenHandsExecutor
+# (test_openhands_executor.py, test_real_orchestration.py, scripts/).
+# Install these in a Python 3.12 environment alongside a running Ollama
+# instance serving the configured models.
+# openhands-sdk==1.42.1
+# openhands-tools==1.42.1
+# pydantic==2.13.4

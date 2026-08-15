@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "olive-framework"
+version = "0.1.0"
+description = "Olive Framework -- a local-first autonomous software-development system."
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+openhands = [
+    "openhands-sdk==1.42.1",
+    "openhands-tools==1.42.1",
+    "pydantic==2.13.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["olive*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
