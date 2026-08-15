@@ -54,14 +54,30 @@ local prototype and rebranded.
 
 The Qwen/OpenHands executor path has been verified end-to-end against a real
 local Ollama server on this machine (see `tests/test_real_orchestration.py`).
-The DeepSeek/Ollama planner path is implemented and unit-tested but live
-verification against `deepseek-r1:8b` on this machine's 6GB-VRAM GPU is
-still in progress -- reasoning-model latency and JSON-mode output reliability
-are both open questions being tracked, not yet resolved. The OpenHands
-reviewer's `browser_tool_set` availability is confirmed offline; a full
-live visual-review run (navigating a real running app and screenshotting
-it) hasn't been exercised yet since there's no generated application in
-this repo to point it at.
+
+The DeepSeek/Ollama planner path is implemented and thoroughly unit-tested
+(fenced/think-wrapped JSON extraction, duplicate-ID and other validation
+failures, network/HTTP-level retries), but has not yet completed a full
+successful live run on this machine. Across several live attempts against
+`deepseek-r1:8b` on this machine's 6GB-VRAM GPU:
+- with `format="json"` (the default): one attempt timed out at 600s, one
+  attempt returned a response after ~15 min that was valid-ish (markdown-
+  fenced, contained a duplicate task ID) -- exactly the cases the parser
+  and retry logic above were built to handle -- and one attempt timed out
+  at 1800s with no response at all.
+- with `format="json"` disabled (tried as a fix for the slowness): Ollama's
+  server itself returned a 500 ("The model produced output that does not
+  match the expected peg-native format") -- a template mismatch specific
+  to this Ollama/model combination, not a client-side setting. Reverted;
+  `format="json"` is the only mode that has ever produced usable content.
+
+In short: the code path is believed correct and defensively handles every
+failure mode observed so far, but `deepseek-r1:8b` on this hardware is
+slow and inconsistent enough that a clean end-to-end confirmation is still
+pending. The OpenHands reviewer's `browser_tool_set` availability is
+confirmed offline; a full live visual-review run (navigating a real running
+app and screenshotting it) hasn't been exercised yet since there's no
+generated application in this repo to point it at.
 
 Failure handling: a failing task is retried up to `--max-retries` times,
 and a task that ultimately fails no longer aborts the whole run --
