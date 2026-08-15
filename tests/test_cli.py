@@ -55,3 +55,68 @@ def test_events_log_written_to_file(tmp_path):
 
     first = json.loads(lines[0])
     assert first["type"] == "PROJECT_LOADED"
+
+
+def test_resume_without_state_dir_is_rejected():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main([str(PROJECT_FILE), "--resume"])
+
+
+def test_state_dir_persists_task_state(tmp_path):
+    state_dir = tmp_path / "state"
+
+    exit_code = main([str(PROJECT_FILE), "--state-dir", str(state_dir)])
+
+    assert exit_code == 0
+    assert (state_dir / "task_state.json").exists()
+    assert (state_dir / "events.jsonl").exists()
+
+    import json
+
+    statuses = json.loads((state_dir / "task_state.json").read_text(encoding="utf-8"))
+    assert statuses == {
+        "TASK-001": "completed",
+        "TASK-002": "completed",
+        "TASK-003": "completed",
+    }
+
+
+def test_resume_skips_already_completed_tasks(tmp_path):
+    state_dir = tmp_path / "state"
+    first_log = tmp_path / "first.jsonl"
+    second_log = tmp_path / "second.jsonl"
+
+    main(
+        [
+            str(PROJECT_FILE),
+            "--state-dir",
+            str(state_dir),
+            "--events-log",
+            str(first_log),
+        ]
+    )
+
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--state-dir",
+            str(state_dir),
+            "--resume",
+            "--events-log",
+            str(second_log),
+        ]
+    )
+
+    assert exit_code == 0
+
+    import json
+
+    second_events = [
+        json.loads(line)
+        for line in second_log.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    task_started_events = [e for e in second_events if e["type"] == "TASK_STARTED"]
+
+    assert task_started_events == []

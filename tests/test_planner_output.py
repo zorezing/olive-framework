@@ -35,6 +35,41 @@ def test_valid_planner_output():
     assert output.tasks[1].dependencies == ["TASK-001"]
 
 
+def test_planner_output_wrapped_in_markdown_fence():
+    raw = f"```json\n{valid_output()}\n```"
+
+    output = parse_planner_output(raw)
+
+    assert len(output.tasks) == 2
+
+
+def test_planner_output_with_leading_think_block():
+    raw = f"<think>\nLet me plan this out...\n</think>\n{valid_output()}"
+
+    output = parse_planner_output(raw)
+
+    assert len(output.tasks) == 2
+
+
+def test_planner_output_with_trailing_commentary_after_json():
+    raw = f"{valid_output()}\n\nI think that covers everything, let me also consider..."
+
+    output = parse_planner_output(raw)
+
+    assert len(output.tasks) == 2
+
+
+def test_planner_output_fenced_with_stray_closing_think_tag():
+    # Matches an actual deepseek-r1:8b response observed live: JSON wrapped
+    # in a fence, immediately followed by a stray "</think>" and then more
+    # (unrelated, ignored) rambling.
+    raw = f"\n```json\n{valid_output()}\n```</think>\nSome more unrelated text and even another {{ incomplete block"
+
+    output = parse_planner_output(raw)
+
+    assert len(output.tasks) == 2
+
+
 def test_planner_output_becomes_task_graph():
     output = parse_planner_output(valid_output())
 

@@ -154,3 +154,35 @@ def test_orchestrator_creates_its_own_bus_when_none_given():
     assert EventType.ORCHESTRATION_COMPLETED in [
         event.type for event in orchestrator.events.log
     ]
+
+
+def test_preseeded_completed_tasks_are_not_re_executed():
+    graph = create_graph()
+    executor = FakeExecutor()
+
+    orchestrator = Orchestrator(
+        graph=graph,
+        executor=executor,
+        completed={"TASK-001"},
+    )
+    orchestrator.run()
+
+    assert "TASK-001" not in executor.executed_tasks
+    assert set(executor.executed_tasks) == {"TASK-002", "TASK-003", "TASK-004"}
+    assert orchestrator.statuses["TASK-001"] == TaskStatus.COMPLETED
+    assert orchestrator.is_complete()
+
+
+def test_all_tasks_preseeded_completed_skips_execution_entirely():
+    graph = create_graph()
+    executor = FakeExecutor()
+
+    orchestrator = Orchestrator(
+        graph=graph,
+        executor=executor,
+        completed={"TASK-001", "TASK-002", "TASK-003", "TASK-004"},
+    )
+    orchestrator.run()
+
+    assert executor.executed_tasks == []
+    assert orchestrator.is_complete()

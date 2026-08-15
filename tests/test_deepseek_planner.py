@@ -49,3 +49,100 @@ def test_deepseek_planner():
     assert graph.get_task("TASK-002").dependencies == [
         "TASK-001"
     ]
+
+
+VALID_RESPONSE = """
+{
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "title": "Initialize project",
+      "description": "Create the initial project structure.",
+      "task_type": "infrastructure",
+      "dependencies": []
+    }
+  ]
+}
+"""
+
+DUPLICATE_ID_RESPONSE = """
+{
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "title": "First",
+      "description": "First task.",
+      "task_type": "backend",
+      "dependencies": []
+    },
+    {
+      "id": "TASK-001",
+      "title": "Duplicate",
+      "description": "Same ID as the first task.",
+      "task_type": "backend",
+      "dependencies": []
+    }
+  ]
+}
+"""
+
+
+class FlakyOllamaClient:
+    """Returns bad output for the first N calls, then a valid plan.
+
+    Mirrors what was observed live with deepseek-r1:8b: some generations
+    fail validation (e.g. duplicate task IDs) even though the request
+    asked for a single clean plan.
+    """
+
+    def __init__(self, bad_responses: list[str]):
+        self.bad_responses = list(bad_responses)
+        self.calls = 0
+
+    def chat(self, model, system, prompt):
+        self.calls += 1
+
+        if self.bad_responses:
+            return self.bad_responses.pop(0)
+
+        return VALID_RESPONSE
+
+
+def test_deepseek_planner_retries_after_invalid_json():
+    project = ProjectParser().parse(PROJECT_FILE)
+
+    client = FlakyOllamaClient(bad_responses=["not json at all"])
+    planner = DeepSeekPlanner(client=client, max_attempts=3)
+
+    graph = planner.create_plan(project)
+
+    assert client.calls == 2
+    assert len(graph.tasks) == 1
+
+
+def test_deepseek_planner_retries_after_failed_validation():
+    project = ProjectParser().parse(PROJECT_FILE)
+
+    client = FlakyOllamaClient(bad_responses=[DUPLICATE_ID_RESPONSE])
+    planner = DeepSeekPlanner(client=client, max_attempts=3)
+
+    graph = planner.create_plan(project)
+
+    assert client.calls == 2
+    assert len(graph.tasks) == 1
+
+
+def test_deepseek_planner_gives_up_after_max_attempts():
+    import pytest
+
+    project = ProjectParser().parse(PROJECT_FILE)
+
+    client = FlakyOllamaClient(
+        bad_responses=[DUPLICATE_ID_RESPONSE, DUPLICATE_ID_RESPONSE, DUPLICATE_ID_RESPONSE]
+    )
+    planner = DeepSeekPlanner(client=client, max_attempts=3)
+
+    with pytest.raises(ValueError, match="3 attempt"):
+        planner.create_plan(project)
+
+    assert client.calls == 3

@@ -14,8 +14,10 @@ class OpenHandsExecutor:
         workspace: Path,
         model: str = "qwen3:8b",
         ollama_base_url: str = "http://localhost:11434",
+        persistence_dir: Path | None = None,
     ):
         self.workspace = Path(workspace)
+        self.persistence_dir = Path(persistence_dir) if persistence_dir else None
 
         self.llm = LLM(
             model=f"openai/{model}",
@@ -35,9 +37,16 @@ class OpenHandsExecutor:
             system_prompt=self._system_prompt(),
         )
 
+        conversation_kwargs = {}
+        if self.persistence_dir is not None:
+            conversation_kwargs["persistence_dir"] = str(
+                self.persistence_dir / task.id
+            )
+
         conversation = Conversation(
             agent=agent,
             workspace=self.workspace,
+            **conversation_kwargs,
         )
 
         conversation.send_message(

@@ -13,25 +13,36 @@ class DeepSeekPlanner(Planner):
         self,
         client: OllamaClient | None = None,
         model: str = "deepseek-r1:8b",
+        max_attempts: int = 3,
     ):
         self.client = client or OllamaClient()
         self.model = model
+        self.max_attempts = max_attempts
 
     def create_plan(self, project: Project) -> TaskGraph:
         prompt = self._build_prompt(project)
 
-        raw_output = self.client.chat(
-            model=self.model,
-            system=PLANNER_SYSTEM_PROMPT,
-            prompt=prompt,
+        last_error: ValueError | None = None
+
+        for _ in range(self.max_attempts):
+            raw_output = self.client.chat(
+                model=self.model,
+                system=PLANNER_SYSTEM_PROMPT,
+                prompt=prompt,
+            )
+
+            try:
+                output = parse_planner_output(raw_output)
+                graph = output.to_task_graph()
+                graph.validate()
+                return graph
+            except ValueError as exc:
+                last_error = exc
+
+        raise ValueError(
+            f"DeepSeek planner produced no valid task graph after "
+            f"{self.max_attempts} attempt(s): {last_error}"
         )
-
-        output = parse_planner_output(raw_output)
-
-        graph = output.to_task_graph()
-        graph.validate()
-
-        return graph
 
     @staticmethod
     def _build_prompt(project: Project) -> str:

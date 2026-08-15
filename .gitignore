@@ -11,3 +11,6 @@ OPENHANDS_TEST.txt
 OPENHANDS_EXECUTOR_TEST.txt
 OLIVE_REAL_TASK_TEST.txt
 PROFILE_TEST.txt
+
+# Default --state-dir persistence output
+.olive/

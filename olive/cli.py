@@ -26,7 +26,13 @@ def build_planner(name: str, ollama_url: str, model: str):
     raise ValueError(f"Unknown planner: {name}")
 
 
-def build_executor(name: str, workspace: Path, ollama_url: str, model: str):
+def build_executor(
+    name: str,
+    workspace: Path,
+    ollama_url: str,
+    model: str,
+    persistence_dir: Path | None = None,
+):
     if name == "fake":
         return FakeExecutor()
 
@@ -37,6 +43,7 @@ def build_executor(name: str, workspace: Path, ollama_url: str, model: str):
             workspace=workspace,
             model=model,
             ollama_base_url=ollama_url,
+            persistence_dir=persistence_dir,
         )
 
     raise ValueError(f"Unknown executor: {name}")
@@ -104,11 +111,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Show a live terminal dashboard instead of plain log output",
     )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Persist task state and the event log to this directory as "
+            "the run progresses, enabling --resume later"
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip tasks already marked completed in --state-dir",
+    )
 
     args = parser.parse_args(argv)
 
+    if args.resume and not args.state_dir:
+        parser.error("--resume requires --state-dir")
+
     events = EventBus()
     ui = None
+    state_store = None
+
+    if args.state_dir:
+        from olive.persistence import StateStore
+
+        state_store = StateStore(args.state_dir)
+        state_store.attach(events)
 
     if args.ui:
         from olive.ui import LiveConsoleUI
@@ -154,13 +185,31 @@ def main(argv: list[str] | None = None) -> int:
 
         if not args.dry_run:
             workspace = args.workspace or args.project.resolve().parent
+            persistence_dir = (
+                args.state_dir / "openhands" if args.state_dir else None
+            )
             executor = build_executor(
-                args.executor, workspace, args.ollama_url, args.coder_model
+                args.executor,
+                workspace,
+                args.ollama_url,
+                args.coder_model,
+                persistence_dir=persistence_dir,
             )
             if ui is not None:
                 ui.executor_name = args.executor
 
-            orchestrator = Orchestrator(graph=graph, executor=executor, events=events)
+            already_completed = (
+                state_store.completed_task_ids()
+                if args.resume and state_store is not None
+                else set()
+            )
+
+            orchestrator = Orchestrator(
+                graph=graph,
+                executor=executor,
+                events=events,
+                completed=already_completed,
+            )
             orchestrator.run()
 
             if orchestrator.is_complete():

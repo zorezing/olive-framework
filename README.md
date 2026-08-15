@@ -17,6 +17,8 @@ olive/
   cli.py                      `olive` command: PROJECT.md -> plan -> execute
   events.py                   EventType/Event/EventBus -- structured event log
   ui.py                       Live terminal dashboard (rich-based), driven by events
+  persistence.py               StateStore: streams events + task status to
+                               disk for --state-dir / --resume
   state/
     parser.py                PROJECT.md parser
     project.py                Parsed project data
@@ -55,9 +57,8 @@ are both open questions being tracked, not yet resolved.
 Not yet built: a Reviewer/Designer agent with browser/MCP-based visual
 inspection, a CI/completion gate that actually runs tests against the
 generated project, auto-generated knowledge docs (`plan.md`,
-`design.md`, `review.md`, ...), durable persistence/recovery, and
-pause/resume/approve human controls. See `FORGE_PROJECT_SPEC.md` for the
-full intended scope.
+`design.md`, `review.md`, ...), and pause/resume/approve human controls.
+See `FORGE_PROJECT_SPEC.md` for the full intended scope.
 
 ## Running tests
 
@@ -113,3 +114,18 @@ Flags:
   live status, current task, recent event log) instead of plain log lines.
 - `--events-log PATH` -- write the full structured event log as JSON lines
   once the run finishes (works with or without `--ui`).
+- `--state-dir PATH` -- stream task status and the event log to this
+  directory as the run progresses (`task_state.json`, `events.jsonl`), and
+  (for the `openhands` executor) give each task's OpenHands conversation
+  its own persisted session under `PATH/openhands/<task-id>/`.
+- `--resume` -- combined with `--state-dir` pointed at a prior run's
+  directory, skip any task already recorded as completed there instead of
+  re-executing it. Requires `--state-dir`.
+
+Example: an interrupted run can be continued without redoing finished work:
+
+```
+olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
+# ...interrupted partway through...
+olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive --resume
+```

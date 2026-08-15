@@ -12,20 +12,30 @@ class Orchestrator:
         graph: TaskGraph,
         executor: Executor,
         events: EventBus | None = None,
+        completed: set[str] | None = None,
     ):
         self.graph = graph
         self.executor = executor
         self.events = events or EventBus()
+        self._preseeded_completed = set(completed or ())
 
         self.statuses = {
-            task.id: TaskStatus.PENDING
+            task.id: (
+                TaskStatus.COMPLETED
+                if task.id in self._preseeded_completed
+                else TaskStatus.PENDING
+            )
             for task in graph.tasks
         }
 
     def run(self) -> None:
-        """Execute all tasks whose dependencies are satisfied."""
+        """Execute all tasks whose dependencies are satisfied.
 
-        completed = set()
+        Tasks whose IDs were passed in as already ``completed`` (e.g.
+        resumed from persisted state) are skipped rather than re-executed.
+        """
+
+        completed = set(self._preseeded_completed)
 
         while len(completed) < len(self.graph.tasks):
             ready_tasks = self.graph.ready_tasks(completed)
