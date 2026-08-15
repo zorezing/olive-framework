@@ -32,6 +32,7 @@ olive/
   workflow/
     planner.py / mock_planner.py / deepseek_planner.py
     executor.py / fake_executor.py / openhands_executor.py
+    reviewer.py / mock_reviewer.py / openhands_reviewer.py
     ollama_client.py           Minimal Ollama HTTP client
     planner_output.py          Planner JSON -> TaskGraph
     prompts.py
@@ -45,8 +46,9 @@ scripts/                       Manual OpenHands smoke-test scripts
 
 Core loop foundation: Markdown project parser, task graph with dependency
 validation, orchestrator, planner interface (mock + DeepSeek/Ollama-backed),
-an executor interface (fake + real OpenHands-backed), a structured event bus,
-a live terminal dashboard, a persistence/resume layer, a CI completion gate,
+an executor interface (fake + real OpenHands-backed), a reviewer interface
+(mock + OpenHands-backed, browser tool enabled), a structured event bus, a
+live terminal dashboard, a persistence/resume layer, a CI completion gate,
 and an `olive` CLI that chains all of it together. Ported from an earlier
 local prototype and rebranded.
 
@@ -55,13 +57,17 @@ local Ollama server on this machine (see `tests/test_real_orchestration.py`).
 The DeepSeek/Ollama planner path is implemented and unit-tested but live
 verification against `deepseek-r1:8b` on this machine's 6GB-VRAM GPU is
 still in progress -- reasoning-model latency and JSON-mode output reliability
-are both open questions being tracked, not yet resolved.
+are both open questions being tracked, not yet resolved. The OpenHands
+reviewer's `browser_tool_set` availability is confirmed offline; a full
+live visual-review run (navigating a real running app and screenshotting
+it) hasn't been exercised yet since there's no generated application in
+this repo to point it at.
 
-Not yet built: a Reviewer/Designer agent with browser/MCP-based visual
-inspection, auto-generated knowledge docs (`plan.md`, `design.md`,
-`review.md`, ...), and pause/resume/approve human controls, beyond the
-crash-recovery `--resume` already in place. See `FORGE_PROJECT_SPEC.md`
-for the full intended scope.
+Not yet built: auto-generated knowledge docs (`plan.md`, `design.md`,
+`review.md` as durable project files rather than one-off review output),
+and pause/resume/approve human controls beyond the crash-recovery
+`--resume` already in place. See `FORGE_PROJECT_SPEC.md` for the full
+intended scope.
 
 ## Running tests
 
@@ -141,3 +147,20 @@ olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
   CI command has passed (or no `--ci-command` was given at all).
 - `--ci-timeout SECONDS` (default `600`) -- per-command timeout for
   `--ci-command`.
+- `--reviewer {none,mock,openhands}` (default `none`) -- once tasks and CI
+  pass, run this reviewer as the final completion gate. `openhands` uses a
+  real OpenHands agent with its browser tool enabled to inspect the
+  workspace (and, if `--review-url` is given, a running instance of the
+  app) against the project's requirements/constraints, then writes
+  `review.json` + `review.md` to the workspace; Olive reads `review.json`
+  back for the pass/fail verdict. If the reviewer doesn't produce a valid
+  `review.json`, the review is treated as failed (fail closed, not open).
+- `--review-model` (default `qwen3:8b`) -- the project spec assumed
+  DeepSeek would fill this role, but only `qwen3:8b` has actually been
+  verified to make reliable OpenHands tool calls in this project's
+  history (see `FORGE_PROJECT_SPEC.md` sec 13), so that's the default
+  here until DeepSeek's OpenHands tool-calling reliability is separately
+  checked.
+- `--review-url URL` -- URL of a running instance of the generated
+  application, for the `openhands` reviewer to visit with its browser
+  tool and screenshot before forming a verdict.

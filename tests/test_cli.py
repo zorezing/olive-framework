@@ -197,3 +197,53 @@ def test_ci_commands_run_in_the_workspace(tmp_path):
 
     assert exit_code == 0
     assert marker.exists()
+
+
+def test_mock_reviewer_approves_and_completes_project(tmp_path):
+    log_path = tmp_path / "events.jsonl"
+
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--reviewer",
+            "mock",
+            "--events-log",
+            str(log_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+    import json
+
+    events = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    event_types = [e["type"] for e in events]
+
+    assert "REVIEW_STARTED" in event_types
+    assert "REVIEW_CREATED" in event_types
+    assert "PROJECT_COMPLETED" in event_types
+
+    review_created = next(e for e in events if e["type"] == "REVIEW_CREATED")
+    assert review_created["payload"]["approved"] is True
+
+
+def test_no_reviewer_by_default(tmp_path):
+    log_path = tmp_path / "events.jsonl"
+
+    exit_code = main([str(PROJECT_FILE), "--events-log", str(log_path)])
+
+    assert exit_code == 0
+
+    import json
+
+    events = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    event_types = [e["type"] for e in events]
+
+    assert "REVIEW_STARTED" not in event_types
+    assert "PROJECT_COMPLETED" in event_types

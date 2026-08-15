@@ -34,6 +34,14 @@ class CIStepProgress:
     status: str = "running"
 
 
+@dataclass
+class ReviewProgress:
+    reviewer: str
+    running: bool = True
+    approved: bool | None = None
+    findings: list[str] = field(default_factory=list)
+
+
 class DashboardState:
     """Tracks live progress derived from an EventBus's event stream.
 
@@ -51,6 +59,7 @@ class DashboardState:
         self.orchestration_complete = False
         self.project_complete = False
         self.ci_steps: list[CIStepProgress] = []
+        self.review: ReviewProgress | None = None
         self.log: list[Event] = []
 
     def handle(self, event: Event) -> None:
@@ -110,6 +119,18 @@ class DashboardState:
         elif event.type == EventType.CI_FAILED:
             if self.ci_steps:
                 self.ci_steps[-1].status = "failed"
+
+        elif event.type == EventType.REVIEW_STARTED:
+            self.review = ReviewProgress(reviewer=event.payload.get("reviewer", ""))
+
+        elif event.type == EventType.REVIEW_CREATED:
+            if self.review is not None:
+                self.review.running = False
+                self.review.approved = event.payload.get("approved")
+
+        elif event.type == EventType.FIX_REQUESTED:
+            if self.review is not None:
+                self.review.findings.append(event.payload.get("summary", ""))
 
         elif event.type == EventType.PROJECT_COMPLETED:
             self.project_complete = True
@@ -172,6 +193,24 @@ def render(state: DashboardState, executor_name: str = "") -> ConsoleRenderable:
 
     ci_panel = Panel(ci_text, title="CI")
 
+    if state.review is None:
+        review_text = Text(
+            "No reviewer configured." if state.project_complete else "(not run yet)",
+            style="dim",
+        )
+    elif state.review.running:
+        review_text = Text(f"Reviewing ({state.review.reviewer})...", style="bold yellow")
+    else:
+        review_text = Text()
+        review_text.append(
+            "APPROVED" if state.review.approved else "CHANGES REQUESTED",
+            style="bold green" if state.review.approved else "bold red",
+        )
+        for finding in state.review.findings:
+            review_text.append(f"\n- {finding}")
+
+    review_panel = Panel(review_text, title="Reviewer")
+
     log_lines = Text()
     for event in state.recent_log():
         detail = event.payload.get("task_id") or event.payload.get("name") or ""
@@ -190,6 +229,7 @@ def render(state: DashboardState, executor_name: str = "") -> ConsoleRenderable:
         planner_panel,
         coder_panel,
         ci_panel,
+        review_panel,
         log_panel,
     )
 

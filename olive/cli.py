@@ -49,6 +49,36 @@ def build_executor(
     raise ValueError(f"Unknown executor: {name}")
 
 
+def build_reviewer(
+    name: str,
+    workspace: Path,
+    ollama_url: str,
+    model: str,
+    review_url: str | None,
+    persistence_dir: Path | None = None,
+):
+    if name == "none":
+        return None
+
+    if name == "mock":
+        from olive.workflow.mock_reviewer import MockReviewer
+
+        return MockReviewer()
+
+    if name == "openhands":
+        from olive.workflow.openhands_reviewer import OpenHandsReviewer
+
+        return OpenHandsReviewer(
+            workspace=workspace,
+            model=model,
+            ollama_base_url=ollama_url,
+            review_url=review_url,
+            persistence_dir=persistence_dir,
+        )
+
+    raise ValueError(f"Unknown reviewer: {name}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="olive",
@@ -141,6 +171,32 @@ def main(argv: list[str] | None = None) -> int:
         default=600,
         help="Per-command timeout in seconds for --ci-command (default: 600)",
     )
+    parser.add_argument(
+        "--reviewer",
+        choices=["none", "mock", "openhands"],
+        default="none",
+        help=(
+            "Reviewer agent to run once tasks and CI pass (default: none, "
+            "i.e. skip review)"
+        ),
+    )
+    parser.add_argument(
+        "--review-model",
+        default="qwen3:8b",
+        help=(
+            "Ollama model used by the openhands reviewer (default: qwen3:8b "
+            "-- the only model verified to make reliable OpenHands tool "
+            "calls in this project so far; see README)"
+        ),
+    )
+    parser.add_argument(
+        "--review-url",
+        default=None,
+        help=(
+            "URL of a running instance of the generated application, for "
+            "the openhands reviewer to visit with its browser tool"
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -230,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if orchestrator.is_complete():
                 status("\nAll tasks completed.")
+                gate_passed = True
 
                 if args.ci_command:
                     from olive.ci import CIRunner
@@ -247,14 +304,52 @@ def main(argv: list[str] | None = None) -> int:
                         outcome = "PASSED" if result.passed else "FAILED"
                         status(f"  [{outcome}] {result.command}")
 
-                    if CIRunner.all_passed(ci_results):
-                        status("\nCI passed.")
-                        events.publish(EventType.PROJECT_COMPLETED)
-                    else:
-                        status("\nCI failed.")
-                        exit_code = 1
-                else:
+                    gate_passed = CIRunner.all_passed(ci_results)
+                    status("\nCI passed." if gate_passed else "\nCI failed.")
+
+                if gate_passed and args.reviewer != "none":
+                    review_persistence_dir = (
+                        args.state_dir / "review" if args.state_dir else None
+                    )
+                    reviewer = build_reviewer(
+                        args.reviewer,
+                        workspace,
+                        args.ollama_url,
+                        args.review_model,
+                        args.review_url,
+                        persistence_dir=review_persistence_dir,
+                    )
+
+                    status("\nRunning reviewer...")
+                    events.publish(EventType.REVIEW_STARTED, reviewer=args.reviewer)
+                    review_result = reviewer.review(project)
+                    events.publish(
+                        EventType.REVIEW_CREATED,
+                        approved=review_result.approved,
+                        finding_count=len(review_result.findings),
+                    )
+
+                    for finding in review_result.findings:
+                        status(
+                            f"  [{'BLOCKING' if finding.blocking else 'note'}] "
+                            f"{finding.summary}"
+                        )
+                        if finding.blocking:
+                            events.publish(
+                                EventType.FIX_REQUESTED, summary=finding.summary
+                            )
+
+                    gate_passed = review_result.approved
+                    status(
+                        "\nReview approved."
+                        if gate_passed
+                        else "\nReview found blocking issues."
+                    )
+
+                if gate_passed:
                     events.publish(EventType.PROJECT_COMPLETED)
+                else:
+                    exit_code = 1
             else:
                 status("\nOrchestration finished with incomplete tasks.")
                 exit_code = 1
