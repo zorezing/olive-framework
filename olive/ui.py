@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from rich.console import Console, ConsoleRenderable, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from olive.events import Event, EventBus, EventType
+
+
+STATUS_STYLES = {
+    "pending": "dim",
+    "running": "bold yellow",
+    "completed": "bold green",
+    "failed": "bold red",
+}
+
+
+@dataclass
+class TaskProgress:
+    id: str
+    title: str
+    dependencies: list[str] = field(default_factory=list)
+    status: str = "pending"
+
+
+class DashboardState:
+    """Tracks live progress derived from an EventBus's event stream.
+
+    Kept separate from rendering so it can be unit-tested without a real
+    terminal attached.
+    """
+
+    def __init__(self) -> None:
+        self.project_name = ""
+        self.goal = ""
+        self.planner_name = ""
+        self.planning = False
+        self.tasks: dict[str, TaskProgress] = {}
+        self.current_task_id: str | None = None
+        self.orchestration_complete = False
+        self.log: list[Event] = []
+
+    def handle(self, event: Event) -> None:
+        self.log.append(event)
+
+        if event.type == EventType.PROJECT_LOADED:
+            self.project_name = event.payload.get("name", self.project_name)
+            self.goal = event.payload.get("goal", self.goal)
+
+        elif event.type == EventType.PLANNER_STARTED:
+            self.planner_name = event.payload.get("planner", "")
+            self.planning = True
+
+        elif event.type == EventType.TASK_CREATED:
+            task_id = event.payload["task_id"]
+            self.tasks[task_id] = TaskProgress(
+                id=task_id,
+                title=event.payload.get("title", ""),
+                dependencies=event.payload.get("dependencies", []),
+            )
+
+        elif event.type == EventType.PLAN_CREATED:
+            self.planning = False
+
+        elif event.type == EventType.TASK_STARTED:
+            task_id = event.payload["task_id"]
+            self.current_task_id = task_id
+            if task_id in self.tasks:
+                self.tasks[task_id].status = "running"
+
+        elif event.type == EventType.TASK_COMPLETED:
+            task_id = event.payload["task_id"]
+            if task_id in self.tasks:
+                self.tasks[task_id].status = "completed"
+            if self.current_task_id == task_id:
+                self.current_task_id = None
+
+        elif event.type == EventType.TASK_FAILED:
+            task_id = event.payload["task_id"]
+            if task_id in self.tasks:
+                self.tasks[task_id].status = "failed"
+            if self.current_task_id == task_id:
+                self.current_task_id = None
+
+        elif event.type == EventType.ORCHESTRATION_COMPLETED:
+            self.orchestration_complete = True
+
+    def recent_log(self, count: int = 8) -> list[Event]:
+        return self.log[-count:]
+
+
+def render(state: DashboardState, executor_name: str = "") -> ConsoleRenderable:
+    header = Text(state.project_name or "(unnamed project)", style="bold cyan")
+    if state.goal:
+        header.append(f"\n{state.goal}", style="dim")
+
+    tasks_table = Table(box=None, show_header=True, header_style="bold", expand=True)
+    tasks_table.add_column("Task")
+    tasks_table.add_column("Title")
+    tasks_table.add_column("Depends on")
+    tasks_table.add_column("Status")
+
+    for task in state.tasks.values():
+        tasks_table.add_row(
+            task.id,
+            task.title,
+            ", ".join(task.dependencies) or "-",
+            Text(task.status, style=STATUS_STYLES.get(task.status, "white")),
+        )
+
+    planner_status = (
+        "planning..." if state.planning else f"{len(state.tasks)} task(s) planned"
+    )
+    planner_panel = Panel(
+        tasks_table if state.tasks else Text("(no tasks yet)", style="dim"),
+        title=f"Planner: {state.planner_name or 'n/a'} -- {planner_status}",
+    )
+
+    if state.current_task_id and state.current_task_id in state.tasks:
+        current = state.tasks[state.current_task_id]
+        coder_text = Text(
+            f"Running {current.id}: {current.title}", style="bold yellow"
+        )
+    elif state.orchestration_complete:
+        coder_text = Text("All tasks completed.", style="bold green")
+    else:
+        coder_text = Text("Idle", style="dim")
+
+    coder_panel = Panel(coder_text, title=f"Coder: {executor_name or 'n/a'}")
+
+    log_lines = Text()
+    for event in state.recent_log():
+        detail = event.payload.get("task_id") or event.payload.get("name") or ""
+        log_lines.append(event.type.value, style="bold")
+        if detail:
+            log_lines.append(f" ({detail})")
+        log_lines.append("\n")
+
+    log_panel = Panel(
+        log_lines if state.log else Text("(no events yet)", style="dim"),
+        title="Recent events",
+    )
+
+    return Group(
+        Panel(header, title="Olive Framework"),
+        planner_panel,
+        coder_panel,
+        log_panel,
+    )
+
+
+class LiveConsoleUI:
+    """A terminal-only progress dashboard driven entirely by EventBus events."""
+
+    def __init__(self) -> None:
+        self.state = DashboardState()
+        self.executor_name = ""
+        self._console = Console()
+        self._live: Live | None = None
+
+    def attach(self, events: EventBus) -> None:
+        events.subscribe(self._on_event)
+
+    def _on_event(self, event: Event) -> None:
+        self.state.handle(event)
+        if self._live is not None:
+            self._live.update(render(self.state, self.executor_name), refresh=True)
+
+    def __enter__(self) -> "LiveConsoleUI":
+        self._live = Live(
+            render(self.state, self.executor_name),
+            console=self._console,
+            refresh_per_second=4,
+            transient=False,
+        )
+        self._live.__enter__()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._live is not None:
+            self._live.__exit__(*exc_info)
+            self._live = None

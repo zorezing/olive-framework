@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 from pathlib import Path
 
@@ -98,61 +99,80 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Write the full event log as JSON lines to this path",
     )
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Show a live terminal dashboard instead of plain log output",
+    )
 
     args = parser.parse_args(argv)
 
     events = EventBus()
+    ui = None
 
-    project = ProjectParser().parse(args.project)
-    events.publish(EventType.PROJECT_LOADED, name=project.name)
+    if args.ui:
+        from olive.ui import LiveConsoleUI
 
-    print(f"Project: {project.name}")
-    print(f"Goal: {project.goal}")
+        ui = LiveConsoleUI()
+        ui.attach(events)
 
-    events.publish(EventType.PLANNER_STARTED, planner=args.planner)
-    planner = build_planner(args.planner, args.ollama_url, args.planner_model)
-    graph = planner.create_plan(project)
-    graph.validate()
+    def status(message: str) -> None:
+        if ui is None:
+            print(message)
 
-    for task in graph.tasks:
-        events.publish(
-            EventType.TASK_CREATED,
-            task_id=task.id,
-            title=task.title,
-            dependencies=task.dependencies,
-        )
-    events.publish(EventType.PLAN_CREATED, task_count=len(graph.tasks))
+    with ui if ui is not None else contextlib.nullcontext():
+        project = ProjectParser().parse(args.project)
+        events.publish(EventType.PROJECT_LOADED, name=project.name, goal=project.goal)
 
-    print(f"\nPlanned {len(graph.tasks)} task(s):")
-    for task in graph.tasks:
-        deps = (
-            f" (depends on {', '.join(task.dependencies)})"
-            if task.dependencies
-            else ""
-        )
-        print(f"  {task.id}: {task.title}{deps}")
+        status(f"Project: {project.name}")
+        status(f"Goal: {project.goal}")
 
-    exit_code = 0
+        events.publish(EventType.PLANNER_STARTED, planner=args.planner)
+        planner = build_planner(args.planner, args.ollama_url, args.planner_model)
+        graph = planner.create_plan(project)
+        graph.validate()
 
-    if not args.dry_run:
-        workspace = args.workspace or args.project.resolve().parent
-        executor = build_executor(
-            args.executor, workspace, args.ollama_url, args.coder_model
-        )
+        for task in graph.tasks:
+            events.publish(
+                EventType.TASK_CREATED,
+                task_id=task.id,
+                title=task.title,
+                dependencies=task.dependencies,
+            )
+        events.publish(EventType.PLAN_CREATED, task_count=len(graph.tasks))
 
-        orchestrator = Orchestrator(graph=graph, executor=executor, events=events)
-        orchestrator.run()
+        status(f"\nPlanned {len(graph.tasks)} task(s):")
+        for task in graph.tasks:
+            deps = (
+                f" (depends on {', '.join(task.dependencies)})"
+                if task.dependencies
+                else ""
+            )
+            status(f"  {task.id}: {task.title}{deps}")
 
-        if orchestrator.is_complete():
-            print("\nAll tasks completed.")
-        else:
-            print("\nOrchestration finished with incomplete tasks.")
-            exit_code = 1
+        exit_code = 0
 
-    if args.events_log:
-        with args.events_log.open("w", encoding="utf-8") as handle:
-            for event in events.log:
-                handle.write(json.dumps(event.to_dict()) + "\n")
+        if not args.dry_run:
+            workspace = args.workspace or args.project.resolve().parent
+            executor = build_executor(
+                args.executor, workspace, args.ollama_url, args.coder_model
+            )
+            if ui is not None:
+                ui.executor_name = args.executor
+
+            orchestrator = Orchestrator(graph=graph, executor=executor, events=events)
+            orchestrator.run()
+
+            if orchestrator.is_complete():
+                status("\nAll tasks completed.")
+            else:
+                status("\nOrchestration finished with incomplete tasks.")
+                exit_code = 1
+
+        if args.events_log:
+            with args.events_log.open("w", encoding="utf-8") as handle:
+                for event in events.log:
+                    handle.write(json.dumps(event.to_dict()) + "\n")
 
     return exit_code
 

@@ -9,6 +9,7 @@ description = "Olive Framework -- a local-first autonomous software-development 
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.31",
+    "rich>=13.7",
 ]
 
 [project.optional-dependencies]

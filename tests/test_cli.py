@@ -31,3 +31,27 @@ def test_unknown_project_file_raises():
 
     with pytest.raises(FileNotFoundError):
         main(["projects/demo/DOES_NOT_EXIST.md", "--dry-run"])
+
+
+def test_ui_mode_runs_without_raising():
+    exit_code = main([str(PROJECT_FILE), "--ui"])
+
+    assert exit_code == 0
+
+
+def test_events_log_written_to_file(tmp_path):
+    log_path = tmp_path / "events.jsonl"
+
+    exit_code = main([str(PROJECT_FILE), "--events-log", str(log_path)])
+
+    assert exit_code == 0
+    assert log_path.exists()
+
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+
+    assert len(lines) > 0
+
+    import json
+
+    first = json.loads(lines[0])
+    assert first["type"] == "PROJECT_LOADED"

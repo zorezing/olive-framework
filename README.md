@@ -15,13 +15,16 @@ See `FORGE_PROJECT_SPEC.md` (project owner's copy) for the full design.
 olive/
   core.py                    Olive() app entry point
   cli.py                      `olive` command: PROJECT.md -> plan -> execute
+  events.py                   EventType/Event/EventBus -- structured event log
+  ui.py                       Live terminal dashboard (rich-based), driven by events
   state/
     parser.py                PROJECT.md parser
     project.py                Parsed project data
     task.py / task_graph.py   Internal task graph + dependency validation
     task_state.py / execution.py
   orchestrator/
-    engine.py                 Runs a task graph to completion via an Executor
+    engine.py                 Runs a task graph to completion via an Executor,
+                               emitting events as it goes
   workflow/
     planner.py / mock_planner.py / deepseek_planner.py
     executor.py / fake_executor.py / openhands_executor.py
@@ -38,13 +41,23 @@ scripts/                       Manual OpenHands smoke-test scripts
 
 Core loop foundation: Markdown project parser, task graph with dependency
 validation, orchestrator, planner interface (mock + DeepSeek/Ollama-backed),
-an executor interface (fake + real OpenHands-backed), and an `olive` CLI
-that chains all four together. Ported from an earlier local prototype and
-rebranded.
+an executor interface (fake + real OpenHands-backed), a structured event bus,
+a live terminal dashboard, and an `olive` CLI that chains all of it together.
+Ported from an earlier local prototype and rebranded.
 
-The full local pipeline (DeepSeek planner + Qwen/OpenHands executor, both
-via a local Ollama server) has been verified to run end-to-end on this
-machine -- see "Running the CLI" below.
+The Qwen/OpenHands executor path has been verified end-to-end against a real
+local Ollama server on this machine (see `tests/test_real_orchestration.py`).
+The DeepSeek/Ollama planner path is implemented and unit-tested but live
+verification against `deepseek-r1:8b` on this machine's 6GB-VRAM GPU is
+still in progress -- reasoning-model latency and JSON-mode output reliability
+are both open questions being tracked, not yet resolved.
+
+Not yet built: a Reviewer/Designer agent with browser/MCP-based visual
+inspection, a CI/completion gate that actually runs tests against the
+generated project, auto-generated knowledge docs (`plan.md`,
+`design.md`, `review.md`, ...), durable persistence/recovery, and
+pause/resume/approve human controls. See `FORGE_PROJECT_SPEC.md` for the
+full intended scope.
 
 ## Running tests
 
@@ -96,3 +109,7 @@ Flags:
   (default: the PROJECT.md's parent directory).
 - `--planner-model`, `--coder-model`, `--ollama-url` -- override the
   defaults (`deepseek-r1:8b`, `qwen3:8b`, `http://localhost:11434`).
+- `--ui` -- show a live terminal dashboard (project/goal, task table with
+  live status, current task, recent event log) instead of plain log lines.
+- `--events-log PATH` -- write the full structured event log as JSON lines
+  once the run finishes (works with or without `--ui`).
