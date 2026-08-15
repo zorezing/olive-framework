@@ -197,12 +197,48 @@ def main(argv: list[str] | None = None) -> int:
             "the openhands reviewer to visit with its browser tool"
         ),
     )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=0,
+        help="Retry a failing task up to this many times before giving up (default: 0)",
+    )
 
     args = parser.parse_args(argv)
 
     if args.resume and not args.state_dir:
         parser.error("--resume requires --state-dir")
 
+    needs_ollama = (
+        args.planner == "deepseek"
+        or (not args.dry_run and args.executor == "openhands")
+        or (not args.dry_run and args.reviewer == "openhands")
+    )
+
+    if needs_ollama:
+        from olive.workflow.ollama_client import OllamaClient
+
+        if not OllamaClient(base_url=args.ollama_url).is_available():
+            parser.error(
+                f"Ollama is not reachable at {args.ollama_url}. Start Ollama "
+                "and make sure the required models are pulled before using "
+                "--planner deepseek, --executor openhands, or "
+                "--reviewer openhands."
+            )
+
+    try:
+        return _execute(args)
+    except KeyboardInterrupt:
+        message = "\nInterrupted."
+        if args.state_dir:
+            message += (
+                f" Progress saved to {args.state_dir} -- resume with --resume."
+            )
+        print(message)
+        return 130
+
+
+def _execute(args: argparse.Namespace) -> int:
     events = EventBus()
     ui = None
     state_store = None
@@ -281,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
                 executor=executor,
                 events=events,
                 completed=already_completed,
+                max_retries=args.max_retries,
             )
             orchestrator.run()
 
@@ -351,7 +388,19 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     exit_code = 1
             else:
-                status("\nOrchestration finished with incomplete tasks.")
+                from olive.state.task_state import TaskStatus
+
+                blocked = [
+                    task_id
+                    for task_id, task_status in orchestrator.statuses.items()
+                    if task_status == TaskStatus.PENDING
+                ]
+                status(
+                    f"\nOrchestration finished with failures: "
+                    f"{sorted(orchestrator.failed)}"
+                )
+                if blocked:
+                    status(f"Blocked (never attempted): {sorted(blocked)}")
                 exit_code = 1
 
         if args.events_log:

@@ -63,11 +63,21 @@ live visual-review run (navigating a real running app and screenshotting
 it) hasn't been exercised yet since there's no generated application in
 this repo to point it at.
 
+Failure handling: a failing task is retried up to `--max-retries` times,
+and a task that ultimately fails no longer aborts the whole run --
+independent tasks keep going, only tasks that (transitively) depend on the
+failure are left blocked. Ctrl+C is caught and exits cleanly (exit code
+130) instead of a raw traceback, and if `--state-dir` was set it tells you
+to `--resume`. A pre-flight check confirms Ollama is actually reachable
+before `--planner deepseek` / `--executor openhands` / `--reviewer
+openhands` do anything, with a clear error instead of a buried connection
+traceback.
+
 Not yet built: auto-generated knowledge docs (`plan.md`, `design.md`,
 `review.md` as durable project files rather than one-off review output),
-and pause/resume/approve human controls beyond the crash-recovery
-`--resume` already in place. See `FORGE_PROJECT_SPEC.md` for the full
-intended scope.
+and interactive approve/reject/skip controls (Ctrl+C + `--resume` covers
+pause/resume; nothing prompts mid-run yet). See `FORGE_PROJECT_SPEC.md`
+for the full intended scope.
 
 ## Running tests
 
@@ -164,3 +174,6 @@ olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
 - `--review-url URL` -- URL of a running instance of the generated
   application, for the `openhands` reviewer to visit with its browser
   tool and screenshot before forming a verdict.
+- `--max-retries N` (default `0`) -- retry a failing task up to N times
+  before giving up on it. Independent tasks still run either way; only
+  tasks depending on a permanently failed one are blocked.

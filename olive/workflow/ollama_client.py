@@ -12,6 +12,17 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    def is_available(self, health_timeout: float = 3.0) -> bool:
+        """Quick reachability check, independent of the (long) chat timeout."""
+
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/tags", timeout=health_timeout
+            )
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+
     def chat(
         self,
         model: str,

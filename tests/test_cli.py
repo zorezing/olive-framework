@@ -247,3 +247,77 @@ def test_no_reviewer_by_default(tmp_path):
 
     assert "REVIEW_STARTED" not in event_types
     assert "PROJECT_COMPLETED" in event_types
+
+
+def test_deepseek_planner_requires_reachable_ollama():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                str(PROJECT_FILE),
+                "--planner",
+                "deepseek",
+                "--dry-run",
+                "--ollama-url",
+                "http://localhost:1",
+            ]
+        )
+
+
+def test_dry_run_skips_ollama_check_even_for_openhands_executor():
+    # --dry-run never reaches execution, so the openhands executor's Ollama
+    # dependency should not be checked at all.
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--executor",
+            "openhands",
+            "--dry-run",
+            "--ollama-url",
+            "http://localhost:1",
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_fake_executor_with_mock_planner_never_needs_ollama():
+    exit_code = main(
+        [str(PROJECT_FILE), "--ollama-url", "http://localhost:1"]
+    )
+
+    assert exit_code == 0
+
+
+def test_keyboard_interrupt_is_handled_gracefully(monkeypatch):
+    from olive.orchestrator.engine import Orchestrator
+
+    def raise_interrupt(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Orchestrator, "run", raise_interrupt)
+
+    exit_code = main([str(PROJECT_FILE)])
+
+    assert exit_code == 130
+
+
+def test_keyboard_interrupt_mentions_resume_with_state_dir(tmp_path, capsys):
+    from olive.orchestrator.engine import Orchestrator
+    import pytest
+
+    def raise_interrupt(self):
+        raise KeyboardInterrupt
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Orchestrator, "run", raise_interrupt)
+
+        exit_code = main(
+            [str(PROJECT_FILE), "--state-dir", str(tmp_path / "state")]
+        )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 130
+    assert "--resume" in captured.out
