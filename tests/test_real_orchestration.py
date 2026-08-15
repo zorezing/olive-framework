@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("openhands", reason="requires the openhands optional dependency")
+
 from olive.orchestrator.engine import Orchestrator
 from olive.state.task import Task
 from olive.state.task_graph import TaskGraph

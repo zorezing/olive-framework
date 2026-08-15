@@ -21,6 +21,9 @@ openhands = [
     "pydantic==2.13.4",
 ]
 
+[project.scripts]
+olive = "olive.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["olive*"]
 
