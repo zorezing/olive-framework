@@ -1,9 +1,11 @@
+import sys
 from pathlib import Path
 
 from olive.cli import main
 
 
 PROJECT_FILE = Path("projects/demo/PROJECT.md")
+PY = sys.executable
 
 
 def test_dry_run_prints_plan_without_executing(capsys):
@@ -120,3 +122,78 @@ def test_resume_skips_already_completed_tasks(tmp_path):
     task_started_events = [e for e in second_events if e["type"] == "TASK_STARTED"]
 
     assert task_started_events == []
+
+
+def test_passing_ci_command_marks_project_complete(tmp_path):
+    log_path = tmp_path / "events.jsonl"
+
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--ci-command",
+            f'"{PY}" -c "print(1)"',
+            "--events-log",
+            str(log_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+    import json
+
+    events = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    event_types = [e["type"] for e in events]
+
+    assert "CI_STARTED" in event_types
+    assert "CI_PASSED" in event_types
+    assert "PROJECT_COMPLETED" in event_types
+
+
+def test_failing_ci_command_fails_the_run(tmp_path, capsys):
+    log_path = tmp_path / "events.jsonl"
+
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--ci-command",
+            f'"{PY}" -c "import sys; sys.exit(1)"',
+            "--events-log",
+            str(log_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "CI failed." in captured.out
+
+    import json
+
+    events = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    event_types = [e["type"] for e in events]
+
+    assert "CI_FAILED" in event_types
+    assert "PROJECT_COMPLETED" not in event_types
+
+
+def test_ci_commands_run_in_the_workspace(tmp_path):
+    marker = tmp_path / "ci_marker.txt"
+
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--workspace",
+            str(tmp_path),
+            "--ci-command",
+            f'"{PY}" -c "open(\'ci_marker.txt\', \'w\').write(\'hi\')"',
+        ]
+    )
+
+    assert exit_code == 0
+    assert marker.exists()

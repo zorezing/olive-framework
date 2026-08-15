@@ -125,6 +125,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip tasks already marked completed in --state-dir",
     )
+    parser.add_argument(
+        "--ci-command",
+        action="append",
+        default=[],
+        metavar="CMD",
+        help=(
+            "Shell command to run in the workspace as a completion gate "
+            "after all tasks finish (repeatable; stops at first failure)"
+        ),
+    )
+    parser.add_argument(
+        "--ci-timeout",
+        type=int,
+        default=600,
+        help="Per-command timeout in seconds for --ci-command (default: 600)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -214,6 +230,31 @@ def main(argv: list[str] | None = None) -> int:
 
             if orchestrator.is_complete():
                 status("\nAll tasks completed.")
+
+                if args.ci_command:
+                    from olive.ci import CIRunner
+
+                    status(f"\nRunning {len(args.ci_command)} CI command(s)...")
+                    runner = CIRunner(
+                        workspace=workspace,
+                        commands=args.ci_command,
+                        events=events,
+                        timeout=args.ci_timeout,
+                    )
+                    ci_results = runner.run()
+
+                    for result in ci_results:
+                        outcome = "PASSED" if result.passed else "FAILED"
+                        status(f"  [{outcome}] {result.command}")
+
+                    if CIRunner.all_passed(ci_results):
+                        status("\nCI passed.")
+                        events.publish(EventType.PROJECT_COMPLETED)
+                    else:
+                        status("\nCI failed.")
+                        exit_code = 1
+                else:
+                    events.publish(EventType.PROJECT_COMPLETED)
             else:
                 status("\nOrchestration finished with incomplete tasks.")
                 exit_code = 1

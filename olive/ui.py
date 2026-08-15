@@ -15,6 +15,7 @@ STATUS_STYLES = {
     "pending": "dim",
     "running": "bold yellow",
     "completed": "bold green",
+    "passed": "bold green",
     "failed": "bold red",
 }
 
@@ -25,6 +26,12 @@ class TaskProgress:
     title: str
     dependencies: list[str] = field(default_factory=list)
     status: str = "pending"
+
+
+@dataclass
+class CIStepProgress:
+    command: str
+    status: str = "running"
 
 
 class DashboardState:
@@ -42,6 +49,8 @@ class DashboardState:
         self.tasks: dict[str, TaskProgress] = {}
         self.current_task_id: str | None = None
         self.orchestration_complete = False
+        self.project_complete = False
+        self.ci_steps: list[CIStepProgress] = []
         self.log: list[Event] = []
 
     def handle(self, event: Event) -> None:
@@ -89,6 +98,22 @@ class DashboardState:
         elif event.type == EventType.ORCHESTRATION_COMPLETED:
             self.orchestration_complete = True
 
+        elif event.type == EventType.CI_STARTED:
+            self.ci_steps.append(
+                CIStepProgress(command=event.payload.get("command", ""))
+            )
+
+        elif event.type == EventType.CI_PASSED:
+            if self.ci_steps:
+                self.ci_steps[-1].status = "passed"
+
+        elif event.type == EventType.CI_FAILED:
+            if self.ci_steps:
+                self.ci_steps[-1].status = "failed"
+
+        elif event.type == EventType.PROJECT_COMPLETED:
+            self.project_complete = True
+
     def recent_log(self, count: int = 8) -> list[Event]:
         return self.log[-count:]
 
@@ -132,6 +157,21 @@ def render(state: DashboardState, executor_name: str = "") -> ConsoleRenderable:
 
     coder_panel = Panel(coder_text, title=f"Coder: {executor_name or 'n/a'}")
 
+    if state.ci_steps:
+        ci_text = Text()
+        for step in state.ci_steps:
+            ci_text.append(
+                step.status.upper().ljust(8),
+                style=STATUS_STYLES.get(step.status, "white"),
+            )
+            ci_text.append(f"{step.command}\n")
+    elif state.project_complete:
+        ci_text = Text("No CI configured.", style="dim")
+    else:
+        ci_text = Text("(not run yet)", style="dim")
+
+    ci_panel = Panel(ci_text, title="CI")
+
     log_lines = Text()
     for event in state.recent_log():
         detail = event.payload.get("task_id") or event.payload.get("name") or ""
@@ -149,6 +189,7 @@ def render(state: DashboardState, executor_name: str = "") -> ConsoleRenderable:
         Panel(header, title="Olive Framework"),
         planner_panel,
         coder_panel,
+        ci_panel,
         log_panel,
     )
 

@@ -19,6 +19,8 @@ olive/
   ui.py                       Live terminal dashboard (rich-based), driven by events
   persistence.py               StateStore: streams events + task status to
                                disk for --state-dir / --resume
+  ci.py                        CIRunner: runs --ci-command(s) as a
+                               completion gate after all tasks finish
   state/
     parser.py                PROJECT.md parser
     project.py                Parsed project data
@@ -44,8 +46,9 @@ scripts/                       Manual OpenHands smoke-test scripts
 Core loop foundation: Markdown project parser, task graph with dependency
 validation, orchestrator, planner interface (mock + DeepSeek/Ollama-backed),
 an executor interface (fake + real OpenHands-backed), a structured event bus,
-a live terminal dashboard, and an `olive` CLI that chains all of it together.
-Ported from an earlier local prototype and rebranded.
+a live terminal dashboard, a persistence/resume layer, a CI completion gate,
+and an `olive` CLI that chains all of it together. Ported from an earlier
+local prototype and rebranded.
 
 The Qwen/OpenHands executor path has been verified end-to-end against a real
 local Ollama server on this machine (see `tests/test_real_orchestration.py`).
@@ -55,10 +58,10 @@ still in progress -- reasoning-model latency and JSON-mode output reliability
 are both open questions being tracked, not yet resolved.
 
 Not yet built: a Reviewer/Designer agent with browser/MCP-based visual
-inspection, a CI/completion gate that actually runs tests against the
-generated project, auto-generated knowledge docs (`plan.md`,
-`design.md`, `review.md`, ...), and pause/resume/approve human controls.
-See `FORGE_PROJECT_SPEC.md` for the full intended scope.
+inspection, auto-generated knowledge docs (`plan.md`, `design.md`,
+`review.md`, ...), and pause/resume/approve human controls, beyond the
+crash-recovery `--resume` already in place. See `FORGE_PROJECT_SPEC.md`
+for the full intended scope.
 
 ## Running tests
 
@@ -129,3 +132,12 @@ olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
 # ...interrupted partway through...
 olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive --resume
 ```
+
+- `--ci-command CMD` (repeatable) -- after all tasks complete, run this
+  shell command in the workspace as a completion gate (e.g. the generated
+  project's own test/build command). Stops at the first failing command;
+  the run's overall exit code reflects CI's result, not just task
+  completion. `PROJECT_COMPLETED` only fires once every task *and* every
+  CI command has passed (or no `--ci-command` was given at all).
+- `--ci-timeout SECONDS` (default `600`) -- per-command timeout for
+  `--ci-command`.

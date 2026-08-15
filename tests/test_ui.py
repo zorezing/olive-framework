@@ -109,6 +109,63 @@ def test_orchestration_completed_sets_flag():
     assert state.orchestration_complete is True
 
 
+def test_ci_started_adds_running_step():
+    state = DashboardState()
+    bus = EventBus()
+    bus.subscribe(state.handle)
+
+    bus.publish(EventType.CI_STARTED, command="pytest")
+
+    assert len(state.ci_steps) == 1
+    assert state.ci_steps[0].command == "pytest"
+    assert state.ci_steps[0].status == "running"
+
+
+def test_ci_passed_updates_last_step():
+    state = DashboardState()
+    bus = EventBus()
+    bus.subscribe(state.handle)
+
+    bus.publish(EventType.CI_STARTED, command="pytest")
+    bus.publish(EventType.CI_PASSED, command="pytest")
+
+    assert state.ci_steps[0].status == "passed"
+
+
+def test_ci_failed_updates_last_step():
+    state = DashboardState()
+    bus = EventBus()
+    bus.subscribe(state.handle)
+
+    bus.publish(EventType.CI_STARTED, command="pytest")
+    bus.publish(EventType.CI_FAILED, command="pytest")
+
+    assert state.ci_steps[0].status == "failed"
+
+
+def test_multiple_ci_steps_tracked_independently():
+    state = DashboardState()
+    bus = EventBus()
+    bus.subscribe(state.handle)
+
+    bus.publish(EventType.CI_STARTED, command="pytest")
+    bus.publish(EventType.CI_PASSED, command="pytest")
+    bus.publish(EventType.CI_STARTED, command="npm run build")
+    bus.publish(EventType.CI_FAILED, command="npm run build")
+
+    assert [s.status for s in state.ci_steps] == ["passed", "failed"]
+
+
+def test_project_completed_sets_flag():
+    state = DashboardState()
+    bus = EventBus()
+    bus.subscribe(state.handle)
+
+    bus.publish(EventType.PROJECT_COMPLETED)
+
+    assert state.project_complete is True
+
+
 def test_recent_log_respects_count():
     state = DashboardState()
     bus = EventBus()
@@ -140,6 +197,9 @@ def test_render_does_not_raise_with_populated_state():
     bus.publish(EventType.TASK_STARTED, task_id="TASK-001", title="X")
     bus.publish(EventType.TASK_COMPLETED, task_id="TASK-001", message="done")
     bus.publish(EventType.ORCHESTRATION_COMPLETED)
+    bus.publish(EventType.CI_STARTED, command="pytest")
+    bus.publish(EventType.CI_PASSED, command="pytest")
+    bus.publish(EventType.PROJECT_COMPLETED)
 
     renderable = render(state, executor_name="fake")
 
