@@ -190,3 +190,29 @@ def test_empty_workspace_still_produces_a_prompt(tmp_path):
 
     assert result.approved is True
     assert "no readable files found" in client.calls[0]["prompt"]
+
+
+class RaisingThenValidOllamaClient:
+    def __init__(self, exceptions):
+        self.exceptions = list(exceptions)
+        self.calls = 0
+
+    def chat(self, model, system, prompt, json_mode=True, num_predict=None):
+        self.calls += 1
+        if self.exceptions:
+            raise self.exceptions.pop(0)
+        return APPROVED_RESPONSE
+
+
+def test_retries_after_runtime_error(tmp_path):
+    # OllamaClient.chat() raises RuntimeError for a malformed-but-received
+    # response -- distinct from the RequestException family, easy to miss.
+    client = RaisingThenValidOllamaClient(
+        exceptions=[RuntimeError("Ollama returned an unexpected response.")]
+    )
+    reviewer = SimpleReviewer(workspace=tmp_path, client=client, max_attempts=3)
+
+    result = reviewer.review(make_project())
+
+    assert client.calls == 2
+    assert result.approved is True

@@ -6,9 +6,10 @@ from openhands.tools.preset.default import get_default_tools
 from olive.state.execution import TaskExecution
 from olive.state.task import Task
 from olive.state.task_state import TaskStatus
+from olive.workflow.executor import Executor
 
 
-class OpenHandsExecutor:
+class OpenHandsExecutor(Executor):
     def __init__(
         self,
         workspace: Path,
@@ -120,4 +121,8 @@ Rules:
 - Run relevant tests.
 - Do not stop and ask for confirmation or direction at any point. Keep
   taking the next step yourself until the task is complete.
+- If you use the file_editor tool's `create` command, it takes exactly
+  `command="create"`, `path=<absolute path>`, `file_text=<full file
+  content>`. The parameter for the new file's content is `file_text`,
+  not `content`. Using `content` will fail validation.
 """

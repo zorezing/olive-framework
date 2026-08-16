@@ -244,3 +244,20 @@ def test_deepseek_planner_gives_up_after_repeated_request_exceptions():
         planner.create_plan(project)
 
     assert client.calls == 3
+
+
+def test_deepseek_planner_retries_after_runtime_error():
+    # OllamaClient.chat() raises RuntimeError for a malformed-but-received
+    # response (missing message.content) -- distinct from the
+    # RequestException family, easy to miss when writing the except clause.
+    project = ProjectParser().parse(PROJECT_FILE)
+
+    client = RaisingThenValidOllamaClient(
+        exceptions=[RuntimeError("Ollama returned an unexpected response.")]
+    )
+    planner = DeepSeekPlanner(client=client, max_attempts=3)
+
+    graph = planner.create_plan(project)
+
+    assert client.calls == 2
+    assert len(graph.tasks) == 1

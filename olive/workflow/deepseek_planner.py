@@ -76,7 +76,11 @@ class DeepSeekPlanner(Planner):
                 graph = output.to_task_graph()
                 graph.validate()
                 return graph
-            except (ValueError, requests.exceptions.RequestException) as exc:
+            except (
+                ValueError,
+                RuntimeError,
+                requests.exceptions.RequestException,
+            ) as exc:
                 last_error = exc
 
         raise ValueError(

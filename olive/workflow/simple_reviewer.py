@@ -93,7 +93,11 @@ class SimpleReviewer(Reviewer):
                     num_predict=2048,
                 )
                 return self._parse_verdict(raw_output)
-            except (ValueError, requests.exceptions.RequestException) as exc:
+            except (
+                ValueError,
+                RuntimeError,
+                requests.exceptions.RequestException,
+            ) as exc:
                 last_error = exc
 
         return ReviewResult(
