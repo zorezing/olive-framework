@@ -118,6 +118,17 @@ def test_task_failed_with_retrying_marks_retrying_not_failed():
     assert state.current_task_id is None
 
 
+def test_task_skipped_marks_skipped():
+    state = DashboardState()
+    bus = EventBus()
+    bus.subscribe(state.handle)
+
+    bus.publish(EventType.TASK_CREATED, task_id="TASK-001", title="X", dependencies=[])
+    bus.publish(EventType.TASK_SKIPPED, task_id="TASK-001")
+
+    assert state.tasks["TASK-001"].status == "skipped"
+
+
 def test_orchestration_completed_sets_flag():
     state = DashboardState()
     bus = EventBus()

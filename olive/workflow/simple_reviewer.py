@@ -2,6 +2,7 @@ from pathlib import Path
 
 import requests
 
+from olive.context import rank_files_by_relevance
 from olive.state.project import Project
 from olive.state.review import Finding, ReviewResult
 from olive.workflow.json_extraction import extract_json
@@ -113,12 +114,10 @@ class SimpleReviewer(Reviewer):
             ],
         )
 
-    def _collect_files(self) -> str:
-        entries = []
+    def _collect_files(self, query: str) -> str:
+        candidates: list[tuple[Path, str]] = []
 
         for path in sorted(self.workspace.rglob("*")):
-            if len(entries) >= self.max_files:
-                break
             if path.is_dir():
                 continue
             if any(part in _SKIP_DIR_NAMES for part in path.parts):
@@ -131,16 +130,30 @@ class SimpleReviewer(Reviewer):
             except (UnicodeDecodeError, OSError):
                 continue
 
-            relative = path.relative_to(self.workspace)
-            truncated = text[: self.max_file_chars]
-            entries.append(f"### {relative}\n```\n{truncated}\n```")
+            candidates.append((path.relative_to(self.workspace), text))
 
-        return "\n\n".join(entries) if entries else "(no readable files found)"
+        if not candidates:
+            return "(no readable files found)"
+
+        # More candidate files than fit the budget: keep the ones most
+        # relevant to the project's requirements/constraints (a
+        # lightweight, local, no-model alternative to embedding-based
+        # retrieval -- see olive/context.py) rather than an arbitrary
+        # filesystem-order cutoff.
+        ranked = rank_files_by_relevance(candidates, query, limit=self.max_files)
+
+        entries = [
+            f"### {scored.path}\n```\n{scored.content[: self.max_file_chars]}\n```"
+            for scored in ranked
+        ]
+
+        return "\n\n".join(entries)
 
     def _build_prompt(self, project: Project) -> str:
         requirements = "\n".join(f"- {r}" for r in project.requirements)
         constraints = "\n".join(f"- {c}" for c in project.constraints)
-        files_blob = self._collect_files()
+        query = " ".join(project.requirements + project.constraints)
+        files_blob = self._collect_files(query)
 
         return f"""
 # Project

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from olive.events import EventBus, EventType
+from olive.safety import is_dangerous_command
 
 
 @dataclass
@@ -40,6 +41,21 @@ class CIRunner:
 
         for command in self.commands:
             self.events.publish(EventType.CI_STARTED, command=command)
+
+            danger_reason = is_dangerous_command(command)
+            if danger_reason is not None:
+                results.append(
+                    CIResult(
+                        command=command,
+                        passed=False,
+                        exit_code=-1,
+                        output=f"Refused to run: {danger_reason}",
+                    )
+                )
+                self.events.publish(
+                    EventType.CI_FAILED, command=command, exit_code=-1
+                )
+                break
 
             try:
                 completed = subprocess.run(

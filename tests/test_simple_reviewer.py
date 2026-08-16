@@ -216,3 +216,26 @@ def test_retries_after_runtime_error(tmp_path):
 
     assert client.calls == 2
     assert result.approved is True
+
+
+def test_prioritizes_relevant_files_when_over_budget(tmp_path):
+    (tmp_path / "auth.py").write_text(
+        "def login(username, password):\n    return authenticate(username, password)\n",
+        encoding="utf-8",
+    )
+    for i in range(5):
+        (tmp_path / f"noise{i}.py").write_text(
+            "x = 1  # totally unrelated filler content\n", encoding="utf-8"
+        )
+
+    client = FakeOllamaClient(APPROVED_RESPONSE)
+    reviewer = SimpleReviewer(workspace=tmp_path, client=client, max_files=1)
+
+    reviewer.review(
+        make_project(requirements=["Must implement user login authentication"])
+    )
+
+    prompt = client.calls[0]["prompt"]
+
+    assert "auth.py" in prompt
+    assert "noise" not in prompt

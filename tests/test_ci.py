@@ -109,3 +109,43 @@ def test_emits_ci_failed_event(tmp_path):
 
 def test_all_passed_empty_results_is_true():
     assert CIRunner.all_passed([]) is True
+
+
+def test_refuses_to_run_a_dangerous_command(tmp_path):
+    runner = CIRunner(
+        workspace=tmp_path,
+        commands=["rm -rf /"],
+    )
+
+    results = runner.run()
+
+    assert len(results) == 1
+    assert results[0].passed is False
+    assert "Refused to run" in results[0].output
+
+
+def test_dangerous_command_stops_before_running_it(tmp_path):
+    marker = tmp_path / "should_not_exist.txt"
+
+    runner = CIRunner(
+        workspace=tmp_path,
+        commands=["rm -rf /", f'"{PY}" -c "open(\'should_not_exist.txt\', \'w\').close()"'],
+    )
+    runner.run()
+
+    assert not marker.exists()
+
+
+def test_dangerous_command_emits_ci_failed_not_ci_started_alone(tmp_path):
+    events = EventBus()
+
+    runner = CIRunner(
+        workspace=tmp_path,
+        commands=["rm -rf /"],
+        events=events,
+    )
+    runner.run()
+
+    event_types = [e.type for e in events.log]
+
+    assert event_types == [EventType.CI_STARTED, EventType.CI_FAILED]

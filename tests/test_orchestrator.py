@@ -3,7 +3,7 @@ from olive.state.execution import TaskExecution
 from olive.state.task import Task
 from olive.state.task_graph import TaskGraph
 from olive.state.task_state import TaskStatus
-from olive.orchestrator.engine import Orchestrator
+from olive.orchestrator.engine import OrchestrationAborted, Orchestrator
 from olive.workflow.executor import Executor
 from olive.workflow.fake_executor import FakeExecutor
 
@@ -331,3 +331,92 @@ def test_orchestration_completed_event_carries_failed_and_blocked():
 
     assert completion_event.payload["failed"] == ["TASK-002"]
     assert completion_event.payload["blocked"] == ["TASK-004"]
+
+
+def test_confirm_task_run_executes_normally():
+    graph = create_graph()
+    executor = FakeExecutor()
+
+    orchestrator = Orchestrator(
+        graph=graph, executor=executor, confirm_task=lambda task: "run"
+    )
+    orchestrator.run()
+
+    assert orchestrator.is_complete()
+    assert set(executor.executed_tasks) == {"TASK-001", "TASK-002", "TASK-003", "TASK-004"}
+
+
+def test_confirm_task_skip_marks_skipped_and_unblocks_dependents():
+    graph = create_graph()
+    executor = FakeExecutor()
+
+    def confirm(task):
+        return "skip" if task.id == "TASK-002" else "run"
+
+    orchestrator = Orchestrator(graph=graph, executor=executor, confirm_task=confirm)
+    orchestrator.run()
+
+    assert "TASK-002" not in executor.executed_tasks
+    assert orchestrator.statuses["TASK-002"] == TaskStatus.SKIPPED
+    assert orchestrator.skipped == {"TASK-002"}
+    assert orchestrator.has_skips() is True
+    assert orchestrator.is_complete() is False
+    assert orchestrator.has_failures() is False
+    # TASK-004 depends on TASK-002 (skipped) and TASK-003 -- should still
+    # run since skip unblocks dependents just like completion does.
+    assert "TASK-004" in executor.executed_tasks
+
+
+def test_confirm_task_skip_emits_task_skipped_event():
+    graph = create_graph()
+    executor = FakeExecutor()
+    events = EventBus()
+
+    orchestrator = Orchestrator(
+        graph=graph,
+        executor=executor,
+        events=events,
+        confirm_task=lambda task: "skip" if task.id == "TASK-001" else "run",
+    )
+    orchestrator.run()
+
+    skipped_events = [e for e in events.log if e.type == EventType.TASK_SKIPPED]
+
+    assert len(skipped_events) == 1
+    assert skipped_events[0].payload["task_id"] == "TASK-001"
+
+
+def test_confirm_task_abort_raises_before_running_task():
+    graph = create_graph()
+    executor = FakeExecutor()
+
+    orchestrator = Orchestrator(
+        graph=graph, executor=executor, confirm_task=lambda task: "abort"
+    )
+
+    import pytest
+
+    with pytest.raises(OrchestrationAborted):
+        orchestrator.run()
+
+    assert executor.executed_tasks == []
+
+
+def test_confirm_task_not_called_for_preseeded_completed_tasks():
+    graph = create_graph()
+    executor = FakeExecutor()
+    calls = []
+
+    def confirm(task):
+        calls.append(task.id)
+        return "run"
+
+    orchestrator = Orchestrator(
+        graph=graph,
+        executor=executor,
+        completed={"TASK-001"},
+        confirm_task=confirm,
+    )
+    orchestrator.run()
+
+    assert "TASK-001" not in calls

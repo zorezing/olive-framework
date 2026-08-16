@@ -78,3 +78,13 @@ def test_events_append_across_reloads(tmp_path):
     lines = second_store.events_path.read_text(encoding="utf-8").strip().splitlines()
 
     assert len(lines) == 2
+
+
+def test_skipped_task_counts_as_completed_for_resume(tmp_path):
+    store = StateStore(tmp_path / "state")
+    bus = EventBus()
+    store.attach(bus)
+
+    bus.publish(EventType.TASK_SKIPPED, task_id="TASK-001")
+
+    assert store.completed_task_ids() == {"TASK-001"}

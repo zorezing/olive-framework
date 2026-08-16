@@ -45,6 +45,8 @@ class StateStore:
             self._statuses[task_id] = TaskStatus.COMPLETED.value
         elif event.type == EventType.TASK_FAILED:
             self._statuses[task_id] = TaskStatus.FAILED.value
+        elif event.type == EventType.TASK_SKIPPED:
+            self._statuses[task_id] = TaskStatus.SKIPPED.value
         else:
             return
 
@@ -53,8 +55,13 @@ class StateStore:
         )
 
     def completed_task_ids(self) -> set[str]:
+        """Task IDs that don't need to run again on --resume: genuinely
+        completed, or previously skipped by a human (respecting that
+        choice rather than re-prompting for the same task every resume).
+        """
+
         return {
             task_id
             for task_id, status in self._statuses.items()
-            if status == TaskStatus.COMPLETED.value
+            if status in (TaskStatus.COMPLETED.value, TaskStatus.SKIPPED.value)
         }
