@@ -16,9 +16,11 @@ class OpenHandsExecutor(Executor):
         model: str = "qwen3:8b",
         ollama_base_url: str = "http://localhost:11434",
         persistence_dir: Path | None = None,
+        enable_web_fetch: bool = False,
     ):
         self.workspace = Path(workspace)
         self.persistence_dir = Path(persistence_dir) if persistence_dir else None
+        self.enable_web_fetch = enable_web_fetch
 
         self.llm = LLM(
             model=f"openai/{model}",
@@ -30,6 +32,11 @@ class OpenHandsExecutor(Executor):
             enable_browser=False,
             enable_sub_agents=False,
         )
+
+        if enable_web_fetch:
+            from olive.workflow.mcp_tools import build_web_fetch_tools
+
+            self.tools = list(self.tools) + build_web_fetch_tools()
 
     def execute(self, task: Task) -> TaskExecution:
         agent = Agent(
@@ -95,6 +102,16 @@ After implementing the task:
 """
 
     def _system_prompt(self) -> str:
+        fetch_note = (
+            "\n- You have a `fetch` tool that retrieves a URL's content "
+            "from the internet as markdown. Use it if the task references "
+            "a specific URL, or you need current documentation/information "
+            "you don't already know. Don't use it for things you can "
+            "already answer confidently.\n"
+            if self.enable_web_fetch
+            else ""
+        )
+
         return f"""
 You are Olive Framework's coding and execution agent, operating fully
 autonomously. There is no human watching this conversation and no one
@@ -124,5 +141,4 @@ Rules:
 - If you use the file_editor tool's `create` command, it takes exactly
   `command="create"`, `path=<absolute path>`, `file_text=<full file
   content>`. The parameter for the new file's content is `file_text`,
-  not `content`. Using `content` will fail validation.
-"""
+  not `content`. Using `content` will fail validation.{fetch_note}"""

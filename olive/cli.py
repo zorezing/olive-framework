@@ -34,6 +34,7 @@ def build_executor(
     ollama_url: str,
     model: str,
     persistence_dir: Path | None = None,
+    enable_web_fetch: bool = False,
 ):
     if name == "fake":
         return FakeExecutor()
@@ -46,6 +47,7 @@ def build_executor(
             model=model,
             ollama_base_url=ollama_url,
             persistence_dir=persistence_dir,
+            enable_web_fetch=enable_web_fetch,
         )
 
     raise ValueError(f"Unknown executor: {name}")
@@ -59,6 +61,7 @@ def build_reviewer(
     review_url: str | None,
     ollama_timeout: int,
     persistence_dir: Path | None = None,
+    enable_web_fetch: bool = False,
 ):
     if name == "none":
         return None
@@ -87,6 +90,7 @@ def build_reviewer(
             ollama_base_url=ollama_url,
             review_url=review_url,
             persistence_dir=persistence_dir,
+            enable_web_fetch=enable_web_fetch,
         )
 
     raise ValueError(f"Unknown reviewer: {name}")
@@ -261,6 +265,18 @@ def main(argv: list[str] | None = None) -> int:
             "result, instead of running fully unattended"
         ),
     )
+    parser.add_argument(
+        "--web-fetch",
+        action="store_true",
+        help=(
+            "Give --executor openhands / --reviewer openhands a `fetch` "
+            "MCP tool that retrieves a URL's content from the internet as "
+            "markdown (the official mcp-server-fetch, launched via uvx -- "
+            "requires uv installed and network access). A narrower, more "
+            "bounded action than full interactive browsing; still an "
+            "agentic tool call, so the same reliability caveats apply."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -417,6 +433,7 @@ def _execute(args: argparse.Namespace) -> int:
                 args.ollama_url,
                 args.coder_model,
                 persistence_dir=persistence_dir,
+                enable_web_fetch=args.web_fetch,
             )
             if knowledge_store is not None:
                 knowledge_store.record_decision(
@@ -529,6 +546,7 @@ def _execute(args: argparse.Namespace) -> int:
                         args.review_url,
                         args.ollama_timeout,
                         persistence_dir=review_persistence_dir,
+                        enable_web_fetch=args.web_fetch,
                     )
 
                     while True:

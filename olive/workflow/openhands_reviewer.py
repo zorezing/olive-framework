@@ -31,11 +31,13 @@ class OpenHandsReviewer(Reviewer):
         review_url: str | None = None,
         persistence_dir: Path | None = None,
         max_attempts: int = 3,
+        enable_web_fetch: bool = False,
     ):
         self.workspace = Path(workspace)
         self.review_url = review_url
         self.persistence_dir = Path(persistence_dir) if persistence_dir else None
         self.max_attempts = max_attempts
+        self.enable_web_fetch = enable_web_fetch
 
         self.llm = LLM(
             model=f"openai/{model}",
@@ -47,6 +49,11 @@ class OpenHandsReviewer(Reviewer):
             enable_browser=True,
             enable_sub_agents=False,
         )
+
+        if enable_web_fetch:
+            from olive.workflow.mcp_tools import build_web_fetch_tools
+
+            self.tools = list(self.tools) + build_web_fetch_tools()
 
     def review(self, project: Project) -> ReviewResult:
         """Run the review conversation, retrying up to max_attempts times
@@ -213,6 +220,15 @@ Rules:
 """
 
     def _system_prompt(self) -> str:
+        fetch_note = (
+            "\n- You have a `fetch` tool that retrieves a URL's content "
+            "from the internet as markdown. Use it to check current "
+            "documentation or research a pattern if that's relevant to "
+            "the review -- don't use it for things you already know.\n"
+            if self.enable_web_fetch
+            else ""
+        )
+
         return f"""
 You are Olive Framework's review and design agent, operating fully
 autonomously. There is no human watching this conversation and no one
@@ -239,8 +255,7 @@ Rules:
 - Always write review.json and review.md as your final action, using
   the terminal tool (PowerShell), not the file_editor tool.
 - Do not stop and ask for confirmation or direction at any point. Keep
-  taking the next step yourself until review.json and review.md exist.
-"""
+  taking the next step yourself until review.json and review.md exist.{fetch_note}"""
 
     def _read_verdict(self) -> ReviewResult | None:
         """Read back review.json. Returns None (not a failed ReviewResult)

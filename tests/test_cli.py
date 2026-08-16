@@ -381,3 +381,29 @@ def test_failing_ci_command_prints_its_output(capsys):
 
     assert exit_code == 1
     assert "boom details here" in captured.out
+
+
+def test_web_fetch_flag_is_a_noop_for_fake_and_mock():
+    # --web-fetch only does anything for the openhands executor/reviewer
+    # (it needs an agentic tool-calling loop); with the default
+    # mock/fake pipeline it should parse fine and simply be ignored.
+    exit_code = main([str(PROJECT_FILE), "--web-fetch"])
+
+    assert exit_code == 0
+
+
+def test_web_fetch_passed_to_build_executor(monkeypatch):
+    import olive.cli
+
+    captured = {}
+    original = olive.cli.build_executor
+
+    def spy(*args, **kwargs):
+        captured["enable_web_fetch"] = kwargs.get("enable_web_fetch")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(olive.cli, "build_executor", spy)
+
+    main([str(PROJECT_FILE), "--web-fetch"])
+
+    assert captured["enable_web_fetch"] is True

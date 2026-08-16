@@ -178,3 +178,45 @@ def test_review_gives_up_after_max_attempts(tmp_path, monkeypatch):
     assert calls == [1, 2, 3]
     assert result.approved is False
     assert "3 attempt" in result.findings[0].summary
+
+
+def test_web_fetch_disabled_by_default(tmp_path):
+    reviewer = OpenHandsReviewer(workspace=tmp_path)
+
+    assert reviewer.enable_web_fetch is False
+
+
+def test_web_fetch_disabled_does_not_touch_mcp(tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "olive.workflow.mcp_tools.build_web_fetch_tools",
+        lambda *a, **k: called.append(True) or [],
+    )
+
+    OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=False)
+
+    assert called == []
+
+
+def test_web_fetch_enabled_extends_tools(tmp_path, monkeypatch):
+    fake_tool = object()
+    monkeypatch.setattr(
+        "olive.workflow.mcp_tools.build_web_fetch_tools",
+        lambda *a, **k: [fake_tool],
+    )
+
+    reviewer = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=True)
+
+    assert fake_tool in reviewer.tools
+
+
+def test_web_fetch_system_prompt_mentions_fetch_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "olive.workflow.mcp_tools.build_web_fetch_tools", lambda *a, **k: []
+    )
+
+    enabled = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=True)
+    disabled = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=False)
+
+    assert "you have a `fetch` tool" in enabled._system_prompt().lower()
+    assert "you have a `fetch` tool" not in disabled._system_prompt().lower()
