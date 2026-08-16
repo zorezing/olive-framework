@@ -186,12 +186,20 @@ correctly approved/rejected both, with an accurate, specific finding in
 the rejection case, zero retries needed either time. **`--reviewer
 ollama` (`SimpleReviewer`) is the reliable, recommended default now.**
 `OpenHandsReviewer` remains available as `--reviewer openhands` and is
-still the only option when `--review-url` is given -- there's no way
-around needing an agent with browser tools for actually visiting and
-screenshotting a running application, and that specific browser-driving
-path hasn't been live-tested yet (there's no generated application in
-this repo to point it at). Given the pattern above, expect the same
-kind of agentic unreliability there until proven otherwise.
+still the only option when `--review-url` is given -- there's no
+non-agentic alternative for actually visiting and screenshotting a
+running application. **That browser-driving path has now been
+live-tested too, and confirmed unreliable in the same way.** Set up a
+minimal local static page (a real running application, served over
+HTTP) and a `PROJECT.md` requiring its exact heading text, then ran
+`OpenHandsReviewer` with `--review-url` live: all 3 attempts (its own
+retry budget) failed to produce a valid `review.json` -- and across the
+whole run, `browser_navigate` (the tool that actually visits a URL) was
+never called even once; the only browser-related call made was
+`browser_list_tabs`. This is the same failure pattern as the source-only
+case, now confirmed for the one scenario `SimpleReviewer` structurally
+can't cover. If you need `--review-url`, expect to supervise it closely
+or verify the result yourself -- don't trust it unattended.
 
 Failure handling: a failing task is retried up to `--max-retries` times,
 and a task that ultimately fails no longer aborts the whole run --
