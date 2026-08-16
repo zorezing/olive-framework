@@ -20,8 +20,8 @@ That runs entirely offline (mock planner, no execution) just to confirm
 the install works. To actually build something with local models, you
 need [Ollama](https://ollama.com) running with `qwen3:8b` pulled
 (`ollama pull qwen3:8b`), plus the `openhands` extra installed in a
-**Python 3.12** environment (see "Two Python environments" below) if you
-want real code execution rather than a dry-run plan:
+**Python 3.12** environment (see "Running tests" below) if you want real
+code execution rather than a dry-run plan:
 
 ```
 olive path/to/your/PROJECT.md \
@@ -40,18 +40,36 @@ can be continued with `--resume` instead of starting over. See "Running
 the CLI" below for every flag, and "Status" for what's actually been
 live-verified to work vs. what's implemented-but-untested.
 
+**Or skip flags entirely and browse projects interactively:** run
+`olive` with no arguments (from wherever your PROJECT.md files live, or
+pass `--projects-dir`) to open a numbered-menu launcher -- list every
+project found, open one to see its goal/requirements/status, then
+run/resume/create from there without remembering CLI flags. See
+"Interactive launcher" below.
+
+If you added the Python 3.12 environment's `Scripts` directory to your
+PATH (see "Adding `olive` to PATH" below), all of the above works from
+any terminal, in any directory, just by typing `olive`.
+
 ## Layout
 
 ```
 olive/
   core.py                    Olive() app entry point
   cli.py                      `olive` command: PROJECT.md -> plan -> execute
+  launcher.py                 Interactive project browser (`olive` with no args)
   events.py                   EventType/Event/EventBus -- structured event log
   ui.py                       Live terminal dashboard (rich-based), driven by events
   persistence.py               StateStore: streams events + task status to
                                disk for --state-dir / --resume
+  knowledge.py                 KnowledgeStore: plan.md/decisions.md/
+                               reviews/ durable docs, also under --state-dir
   ci.py                        CIRunner: runs --ci-command(s) as a
                                completion gate after all tasks finish
+  safety.py                    is_dangerous_command(): heuristic guard,
+                               used by CIRunner before running a command
+  context.py                   rank_files_by_relevance(): lightweight
+                               local (no-model) file relevance ranking
   state/
     parser.py                PROJECT.md parser
     project.py                Parsed project data
@@ -185,11 +203,25 @@ before `--planner deepseek` / `--executor openhands` / `--reviewer
 openhands` do anything, with a clear error instead of a buried connection
 traceback.
 
-Not yet built: auto-generated knowledge docs (`plan.md`, `design.md`,
-`review.md` as durable project files rather than one-off review output),
-and interactive approve/reject/skip controls (Ctrl+C + `--resume` covers
-pause/resume; nothing prompts mid-run yet). See `FORGE_PROJECT_SPEC.md`
-for the full intended scope.
+Durable knowledge docs, interactive human controls, and an interactive
+project launcher are now built (see their own sections below). A
+`--ci-command` is checked against a heuristic dangerous-command guard
+(`olive/safety.py`) before it runs -- refuses obviously destructive
+patterns (`rm -rf /`, `Remove-Item -Recurse -Force` on a drive root,
+`format`, fork bombs, ...) rather than executing them; this is a safety
+net against self-inflicted typos in commands you supplied yourself, not
+a security sandbox, and is documented as such in the module. `SimpleReviewer`
+ranks candidate files by relevance to the project's requirements/
+constraints (`olive/context.py`, a local term-frequency scorer, no new
+model or dependency) before truncating to its file budget, rather than
+an arbitrary filesystem-order cutoff.
+
+Still not built: `architecture.md`/`design.md`/a `research/` directory
+from the original spec's knowledge layout -- nothing in this codebase
+produces architecture decisions or research findings independent of the
+plan/review content `KnowledgeStore` already captures, and empty
+placeholder files for capabilities that don't exist would be worse than
+not having them. See `FORGE_PROJECT_SPEC.md` for the full intended scope.
 
 ## Running tests
 
@@ -300,3 +332,99 @@ olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
 - `--max-retries N` (default `0`) -- retry a failing task up to N times
   before giving up on it. Independent tasks still run either way; only
   tasks depending on a permanently failed one are blocked.
+- `--interactive` -- prompt before each task (`[Y]es / [s]kip / [a]bort`),
+  and offer `[r]etry / [o]verride / [a]bort` if CI or the reviewer reject
+  the result, instead of running fully unattended. See "Interactive
+  human controls" below.
+- `--projects-dir PATH` (default: current directory) -- root to search
+  for `PROJECT.md` files when `project` is omitted, launching the
+  interactive browser. See "Interactive launcher" below.
+
+## Durable knowledge docs
+
+Whenever `--state-dir` is given, `KnowledgeStore` writes human-readable
+project knowledge there as the run progresses, alongside the resume state:
+
+- `plan.md` -- the current task graph (name, goal, planner used, every
+  task with its dependencies). Regenerated each time planning completes,
+  so it always reflects the latest plan, including after `--resume`
+  replans.
+- `decisions.md` -- an append-only, timestamped log of notable choices:
+  which planner/executor/model were used, CI pass/fail, review verdicts,
+  any `--interactive` overrides, final completion. Nothing is ever
+  removed from it, so it reads as a project history across multiple runs.
+- `reviews/review-NNN.md` + `.json` -- one numbered snapshot per review,
+  never overwritten, so review history accumulates across runs. Built
+  from the `ReviewResult` object itself, so it works uniformly whether
+  you used `--reviewer ollama` or `--reviewer openhands` (the latter's
+  own `review.json` in the *workspace* is a separate, single-run file
+  the agent writes itself -- this is the durable copy).
+
+## Interactive human controls
+
+By default a run is fully unattended. Add `--interactive` for a human in
+the loop:
+
+- Before each task, you're asked `About to run TASK-003: Add tests.
+  [Y]es / [s]kip / [a]bort?`. Skipping marks the task `SKIPPED` (not
+  `COMPLETED` -- shows up distinctly in `--ui` and in `decisions.md`) but
+  still unblocks anything that depended on it, on the assumption you
+  handled it some other way; a skip is remembered across `--resume` just
+  like a completion. Abort stops the whole run immediately, before that
+  task starts, the same way Ctrl+C does (exit code 130, `--state-dir`
+  progress is preserved).
+- If a `--ci-command` fails, or the reviewer rejects the result, you're
+  asked `[r]etry / [o]verride / [a]bort`. Retry re-runs the same gate;
+  override is your explicit authority to accept the result anyway despite
+  the tool's own gate saying no (recorded in `decisions.md`, not silent);
+  abort stops the run.
+
+## Interactive launcher
+
+Run `olive` with no `PROJECT.md` argument to open a numbered-menu project
+browser instead of executing anything directly:
+
+```
+olive --projects-dir path/to/your/projects
+```
+
+It recursively finds every `PROJECT.md` under that root (default: current
+directory), skipping the usual noise directories (`.git`, `node_modules`,
+`.venv`, etc.), and shows each one's name, goal, and status (`not started`
+/ `in progress` / `needs attention` / `completed`, derived from
+`<project-dir>/.olive/task_state.json` if present). Selecting a project
+lets you:
+
+- **run** it -- prompts for planner/executor/reviewer choices (with
+  sensible defaults) and whether to show `--ui`, then calls the exact
+  same `olive.cli.main()` the direct CLI invocation would, with
+  `--state-dir <project-dir>/.olive` automatically set. Not a separate
+  code path from the tested pipeline.
+- **resume** it (shown once a `.olive` state directory exists) -- the
+  same flow with `--resume` added.
+- **view its knowledge docs** -- `plan.md`, `decisions.md`, and the
+  latest review, right there in the menu.
+- **create a new project** from the top-level menu (`n`) -- prompts for a
+  directory name, project name, goal, requirements, and constraints, and
+  writes a properly-formatted `PROJECT.md`.
+
+This is a simple numbered-menu design (rich for display, `input()` for
+interaction), not a full mouse/arrow-key TUI framework -- kept
+dependency-light and easy to test by construction.
+
+## Adding `olive` to PATH
+
+To run `olive` from any directory without activating a venv first, add
+the Python 3.12 environment's `Scripts` directory to your **User** PATH
+(Windows; adjust for other platforms):
+
+```powershell
+$venvScripts = "path\to\olive-framework\.venv312\Scripts"
+$current = [Environment]::GetEnvironmentVariable("PATH", "User")
+[Environment]::SetEnvironmentVariable("PATH", "$current;$venvScripts", "User")
+```
+
+Open a new terminal afterward -- existing ones won't see the change. This
+points `olive` at the fully-capable environment (`openhands` extra
+installed), so `--executor openhands` and `--reviewer openhands` work
+immediately, not just the mock/fake path.
