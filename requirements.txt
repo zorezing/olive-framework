@@ -1,5 +1,6 @@
 # Core
 requests>=2.31
+rich>=13.7
 
 # Testing
 pytest>=7.4

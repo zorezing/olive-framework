@@ -28,11 +28,26 @@ def test_default_run_plans_and_executes_with_mock_and_fake(capsys):
     assert "All tasks completed." in captured.out
 
 
-def test_unknown_project_file_raises():
-    import pytest
+def test_unknown_project_file_prints_clean_error(capsys):
+    exit_code = main(["projects/demo/DOES_NOT_EXIST.md", "--dry-run"])
 
-    with pytest.raises(FileNotFoundError):
-        main(["projects/demo/DOES_NOT_EXIST.md", "--dry-run"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error:" in captured.out
+    assert "DOES_NOT_EXIST.md" in captured.out
+
+
+def test_malformed_project_file_prints_clean_error(tmp_path, capsys):
+    bad_file = tmp_path / "PROJECT.md"
+    bad_file.write_text("## Goal\nNo top-level heading here.", encoding="utf-8")
+
+    exit_code = main([str(bad_file), "--dry-run"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error:" in captured.out
 
 
 def test_ui_mode_runs_without_raising():
@@ -351,3 +366,18 @@ def test_review_url_requires_openhands_reviewer():
                 "http://localhost:3000",
             ]
         )
+
+
+def test_failing_ci_command_prints_its_output(capsys):
+    exit_code = main(
+        [
+            str(PROJECT_FILE),
+            "--ci-command",
+            f'"{PY}" -c "print(\'boom details here\'); import sys; sys.exit(1)"',
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "boom details here" in captured.out

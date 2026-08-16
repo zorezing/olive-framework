@@ -80,7 +80,9 @@ Type: {task.task_type}
 Description:
 {task.description}
 
-Execute this task in the current project workspace.
+Execute this task in the current project workspace, completing every
+step yourself, one tool call after another, without stopping to ask
+what to do next -- no one will answer.
 
 Actually make the required changes using the available tools.
 Do not merely explain what should be done.
@@ -93,7 +95,12 @@ After implementing the task:
 
     def _system_prompt(self) -> str:
         return f"""
-You are Olive Framework's coding and execution agent.
+You are Olive Framework's coding and execution agent, operating fully
+autonomously. There is no human watching this conversation and no one
+will respond to questions or offers of options -- if you stop to ask
+"would you like me to..." or "should I...", the process hangs forever
+and the task fails. Once given a task, keep calling tools yourself,
+one after another, until it is genuinely done.
 
 You operate on Windows.
 
@@ -111,4 +118,6 @@ Rules:
 - Stay inside the project workspace.
 - Verify important changes.
 - Run relevant tests.
+- Do not stop and ask for confirmation or direction at any point. Keep
+  taking the next step yourself until the task is complete.
 """

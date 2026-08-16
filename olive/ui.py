@@ -14,6 +14,7 @@ from olive.events import Event, EventBus, EventType
 STATUS_STYLES = {
     "pending": "dim",
     "running": "bold yellow",
+    "retrying": "bold magenta",
     "completed": "bold green",
     "passed": "bold green",
     "failed": "bold red",
@@ -99,8 +100,9 @@ class DashboardState:
 
         elif event.type == EventType.TASK_FAILED:
             task_id = event.payload["task_id"]
+            retrying = event.payload.get("retrying", False)
             if task_id in self.tasks:
-                self.tasks[task_id].status = "failed"
+                self.tasks[task_id].status = "retrying" if retrying else "failed"
             if self.current_task_id == task_id:
                 self.current_task_id = None
 

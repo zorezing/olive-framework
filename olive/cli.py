@@ -3,6 +3,8 @@ import contextlib
 import json
 from pathlib import Path
 
+import requests
+
 from olive.events import EventBus, EventType
 from olive.state.parser import ProjectParser
 from olive.orchestrator.engine import Orchestrator
@@ -272,6 +274,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(message)
         return 130
+    except (FileNotFoundError, ValueError, RuntimeError, requests.exceptions.RequestException) as exc:
+        print(f"\nError: {exc}")
+        return 1
 
 
 def _execute(args: argparse.Namespace) -> int:
@@ -378,6 +383,9 @@ def _execute(args: argparse.Namespace) -> int:
                     for result in ci_results:
                         outcome = "PASSED" if result.passed else "FAILED"
                         status(f"  [{outcome}] {result.command}")
+                        if not result.passed and result.output.strip():
+                            for line in result.output.strip().splitlines()[-20:]:
+                                status(f"    {line}")
 
                     gate_passed = CIRunner.all_passed(ci_results)
                     status("\nCI passed." if gate_passed else "\nCI failed.")
