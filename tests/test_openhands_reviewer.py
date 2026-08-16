@@ -120,24 +120,43 @@ def test_review_retries_until_review_json_appears(tmp_path, monkeypatch):
     assert result.approved is True
 
 
-def test_review_does_not_retry_a_legitimate_rejection(tmp_path, monkeypatch):
+def test_review_ignores_stale_verdict_from_a_previous_call(tmp_path, monkeypatch):
+    # A review.json left over from an earlier, unrelated review() call
+    # must not be mistaken for this run's output if this run's agent
+    # never actually writes anything.
     (tmp_path / "review.json").write_text(
-        json.dumps(
-            {
-                "approved": False,
-                "findings": [{"summary": "missing tests", "blocking": True}],
-                "notes": "not done yet",
-            }
-        ),
+        json.dumps({"approved": True, "findings": [], "notes": "stale"}),
         encoding="utf-8",
     )
 
+    reviewer = OpenHandsReviewer(workspace=tmp_path, max_attempts=2)
+    monkeypatch.setattr(reviewer, "_run_conversation", lambda project, attempt: None)
+
+    result = reviewer.review(project=object())
+
+    assert result.approved is False
+    assert "2 attempt" in result.findings[0].summary
+
+
+def test_review_does_not_retry_a_legitimate_rejection(tmp_path, monkeypatch):
     reviewer = OpenHandsReviewer(workspace=tmp_path, max_attempts=3)
 
     calls = []
-    monkeypatch.setattr(
-        reviewer, "_run_conversation", lambda project, attempt: calls.append(attempt)
-    )
+
+    def fake_run_conversation(project, attempt):
+        calls.append(attempt)
+        (tmp_path / "review.json").write_text(
+            json.dumps(
+                {
+                    "approved": False,
+                    "findings": [{"summary": "missing tests", "blocking": True}],
+                    "notes": "not done yet",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(reviewer, "_run_conversation", fake_run_conversation)
 
     result = reviewer.review(project=object())
 

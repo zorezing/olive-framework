@@ -9,6 +9,37 @@ requirements.
 
 See `FORGE_PROJECT_SPEC.md` (project owner's copy) for the full design.
 
+## Quickstart
+
+```
+pip install -e .
+olive projects/demo/PROJECT.md --dry-run
+```
+
+That runs entirely offline (mock planner, no execution) just to confirm
+the install works. To actually build something with local models, you
+need [Ollama](https://ollama.com) running with `qwen3:8b` pulled
+(`ollama pull qwen3:8b`), plus the `openhands` extra installed in a
+**Python 3.12** environment (see "Two Python environments" below) if you
+want real code execution rather than a dry-run plan:
+
+```
+olive path/to/your/PROJECT.md \
+  --planner deepseek --planner-model qwen3:8b \
+  --executor openhands --coder-model qwen3:8b \
+  --reviewer ollama \
+  --ui \
+  --state-dir path/to/your/PROJECT/.olive
+```
+
+Write `PROJECT.md` yourself first -- see `projects/demo/PROJECT.md` for
+the expected shape (`# Project`, `## Goal`, `## Requirements`,
+`## Constraints`). `--ui` shows a live terminal dashboard; drop it for
+plain scrolling log lines instead. `--state-dir` means an interrupted run
+can be continued with `--resume` instead of starting over. See "Running
+the CLI" below for every flag, and "Status" for what's actually been
+live-verified to work vs. what's implemented-but-untested.
+
 ## Layout
 
 ```

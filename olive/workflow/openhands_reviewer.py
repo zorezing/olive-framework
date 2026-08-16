@@ -62,6 +62,7 @@ class OpenHandsReviewer(Reviewer):
         """
 
         for attempt in range(1, self.max_attempts + 1):
+            self._clear_stale_verdict()
             self._run_conversation(project, attempt)
 
             result = self._read_verdict()
@@ -80,6 +81,17 @@ class OpenHandsReviewer(Reviewer):
                 )
             ],
         )
+
+    def _clear_stale_verdict(self) -> None:
+        """Remove any review.json/review.md left over from a previous run
+        in this workspace, so a fully-failed attempt can't be mistaken for
+        success by reading stale output that was never produced this time.
+        """
+
+        for name in ("review.json", "review.md"):
+            path = self.workspace / name
+            if path.exists():
+                path.unlink()
 
     def _run_conversation(self, project: Project, attempt: int) -> None:
         agent = Agent(
