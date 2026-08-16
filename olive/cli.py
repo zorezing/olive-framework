@@ -103,7 +103,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "project",
         type=Path,
-        help="Path to a PROJECT.md file",
+        nargs="?",
+        default=None,
+        help=(
+            "Path to a PROJECT.md file. Omit to launch the interactive "
+            "project browser instead (see --projects-dir)."
+        ),
+    )
+    parser.add_argument(
+        "--projects-dir",
+        type=Path,
+        default=Path("."),
+        help=(
+            "Root directory to search for PROJECT.md files in the "
+            "interactive launcher (default: current directory)"
+        ),
     )
     parser.add_argument(
         "--workspace",
@@ -238,8 +252,22 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="Retry a failing task up to this many times before giving up (default: 0)",
     )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help=(
+            "Prompt for confirmation before each task (run/skip/abort), "
+            "and offer retry/override/abort if CI or review reject the "
+            "result, instead of running fully unattended"
+        ),
+    )
 
     args = parser.parse_args(argv)
+
+    if args.project is None:
+        from olive.launcher import run_launcher
+
+        return run_launcher(args.projects_dir)
 
     if args.resume and not args.state_dir:
         parser.error("--resume requires --state-dir")
@@ -264,10 +292,14 @@ def main(argv: list[str] | None = None) -> int:
                 "--reviewer openhands."
             )
 
+    from olive.orchestrator.engine import OrchestrationAborted
+
     try:
         return _execute(args)
-    except KeyboardInterrupt:
-        message = "\nInterrupted."
+    except (KeyboardInterrupt, OrchestrationAborted) as exc:
+        message = (
+            "\nInterrupted." if isinstance(exc, KeyboardInterrupt) else f"\n{exc}"
+        )
         if args.state_dir:
             message += (
                 f" Progress saved to {args.state_dir} -- resume with --resume."
@@ -279,16 +311,52 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+def _confirm_task_decision(task) -> str:
+    while True:
+        answer = input(
+            f"\nAbout to run {task.id}: {task.title}. "
+            "[Y]es / [s]kip / [a]bort? "
+        ).strip().lower()
+        if answer in ("", "y", "yes"):
+            return "run"
+        if answer in ("s", "skip"):
+            return "skip"
+        if answer in ("a", "abort"):
+            return "abort"
+        print("Please answer y, s, or a.")
+
+
+def _confirm_override_decision(question: str) -> str:
+    while True:
+        answer = input(
+            f"\n{question} [r]etry / [o]verride / [a]bort? "
+        ).strip().lower()
+        if answer in ("r", "retry"):
+            return "retry"
+        if answer in ("o", "override"):
+            return "override"
+        if answer in ("a", "abort"):
+            return "abort"
+        print("Please answer r, o, or a.")
+
+
 def _execute(args: argparse.Namespace) -> int:
+    from olive.orchestrator.engine import OrchestrationAborted
+
     events = EventBus()
     ui = None
     state_store = None
+    knowledge_store = None
 
     if args.state_dir:
+        from olive.knowledge import KnowledgeStore
         from olive.persistence import StateStore
 
         state_store = StateStore(args.state_dir)
         state_store.attach(events)
+
+        knowledge_store = KnowledgeStore(args.state_dir)
+        knowledge_store.attach(events)
 
     if args.ui:
         from olive.ui import LiveConsoleUI
@@ -311,6 +379,10 @@ def _execute(args: argparse.Namespace) -> int:
         planner = build_planner(
             args.planner, args.ollama_url, args.planner_model, args.ollama_timeout
         )
+        if knowledge_store is not None:
+            knowledge_store.record_decision(
+                f"Planner: {args.planner} (model={args.planner_model})"
+            )
         graph = planner.create_plan(project)
         graph.validate()
 
@@ -346,6 +418,10 @@ def _execute(args: argparse.Namespace) -> int:
                 args.coder_model,
                 persistence_dir=persistence_dir,
             )
+            if knowledge_store is not None:
+                knowledge_store.record_decision(
+                    f"Executor: {args.executor} (model={args.coder_model})"
+                )
             if ui is not None:
                 ui.executor_name = args.executor
 
@@ -361,34 +437,85 @@ def _execute(args: argparse.Namespace) -> int:
                 events=events,
                 completed=already_completed,
                 max_retries=args.max_retries,
+                confirm_task=_confirm_task_decision if args.interactive else None,
             )
             orchestrator.run()
 
-            if orchestrator.is_complete():
-                status("\nAll tasks completed.")
+            if orchestrator.has_failures():
+                from olive.state.task_state import TaskStatus
+
+                blocked = [
+                    task_id
+                    for task_id, task_status in orchestrator.statuses.items()
+                    if task_status == TaskStatus.PENDING
+                ]
+                status(
+                    f"\nOrchestration finished with failures: "
+                    f"{sorted(orchestrator.failed)}"
+                )
+                if blocked:
+                    status(f"Blocked (never attempted): {sorted(blocked)}")
+                exit_code = 1
+            else:
+                if orchestrator.has_skips():
+                    status(
+                        f"\nAll tasks finished (skipped: "
+                        f"{sorted(orchestrator.skipped)})."
+                    )
+                    if knowledge_store is not None:
+                        knowledge_store.record_decision(
+                            f"Tasks skipped by user: {sorted(orchestrator.skipped)}"
+                        )
+                else:
+                    status("\nAll tasks completed.")
+
                 gate_passed = True
 
                 if args.ci_command:
                     from olive.ci import CIRunner
 
-                    status(f"\nRunning {len(args.ci_command)} CI command(s)...")
-                    runner = CIRunner(
-                        workspace=workspace,
-                        commands=args.ci_command,
-                        events=events,
-                        timeout=args.ci_timeout,
-                    )
-                    ci_results = runner.run()
+                    while True:
+                        status(
+                            f"\nRunning {len(args.ci_command)} CI command(s)..."
+                        )
+                        runner = CIRunner(
+                            workspace=workspace,
+                            commands=args.ci_command,
+                            events=events,
+                            timeout=args.ci_timeout,
+                        )
+                        ci_results = runner.run()
 
-                    for result in ci_results:
-                        outcome = "PASSED" if result.passed else "FAILED"
-                        status(f"  [{outcome}] {result.command}")
-                        if not result.passed and result.output.strip():
-                            for line in result.output.strip().splitlines()[-20:]:
-                                status(f"    {line}")
+                        for result in ci_results:
+                            outcome = "PASSED" if result.passed else "FAILED"
+                            status(f"  [{outcome}] {result.command}")
+                            if not result.passed and result.output.strip():
+                                for line in result.output.strip().splitlines()[-20:]:
+                                    status(f"    {line}")
 
-                    gate_passed = CIRunner.all_passed(ci_results)
-                    status("\nCI passed." if gate_passed else "\nCI failed.")
+                        gate_passed = CIRunner.all_passed(ci_results)
+                        status("\nCI passed." if gate_passed else "\nCI failed.")
+                        if knowledge_store is not None:
+                            knowledge_store.record_decision(
+                                "CI "
+                                + ("passed" if gate_passed else "failed")
+                                + f" ({len(args.ci_command)} command(s))"
+                            )
+
+                        if gate_passed or not args.interactive:
+                            break
+
+                        decision = _confirm_override_decision("CI failed.")
+                        if decision == "retry":
+                            continue
+                        if decision == "override":
+                            gate_passed = True
+                            if knowledge_store is not None:
+                                knowledge_store.record_decision(
+                                    "CI failure overridden by human (--interactive)"
+                                )
+                            break
+                        raise OrchestrationAborted("Aborted after CI failure")
 
                 if gate_passed and args.reviewer != "none":
                     review_persistence_dir = (
@@ -404,51 +531,67 @@ def _execute(args: argparse.Namespace) -> int:
                         persistence_dir=review_persistence_dir,
                     )
 
-                    status("\nRunning reviewer...")
-                    events.publish(EventType.REVIEW_STARTED, reviewer=args.reviewer)
-                    review_result = reviewer.review(project)
-                    events.publish(
-                        EventType.REVIEW_CREATED,
-                        approved=review_result.approved,
-                        finding_count=len(review_result.findings),
-                    )
-
-                    for finding in review_result.findings:
-                        status(
-                            f"  [{'BLOCKING' if finding.blocking else 'note'}] "
-                            f"{finding.summary}"
+                    while True:
+                        status("\nRunning reviewer...")
+                        events.publish(
+                            EventType.REVIEW_STARTED, reviewer=args.reviewer
                         )
-                        if finding.blocking:
-                            events.publish(
-                                EventType.FIX_REQUESTED, summary=finding.summary
+                        review_result = reviewer.review(project)
+                        events.publish(
+                            EventType.REVIEW_CREATED,
+                            approved=review_result.approved,
+                            finding_count=len(review_result.findings),
+                        )
+
+                        for finding in review_result.findings:
+                            status(
+                                f"  [{'BLOCKING' if finding.blocking else 'note'}] "
+                                f"{finding.summary}"
+                            )
+                            if finding.blocking:
+                                events.publish(
+                                    EventType.FIX_REQUESTED,
+                                    summary=finding.summary,
+                                )
+
+                        if knowledge_store is not None:
+                            knowledge_store.record_review(
+                                review_result, args.reviewer
                             )
 
-                    gate_passed = review_result.approved
-                    status(
-                        "\nReview approved."
-                        if gate_passed
-                        else "\nReview found blocking issues."
-                    )
+                        gate_passed = review_result.approved
+                        status(
+                            "\nReview approved."
+                            if gate_passed
+                            else "\nReview found blocking issues."
+                        )
+
+                        if gate_passed or not args.interactive:
+                            break
+
+                        decision = _confirm_override_decision(
+                            "Review found blocking issues."
+                        )
+                        if decision == "retry":
+                            continue
+                        if decision == "override":
+                            gate_passed = True
+                            if knowledge_store is not None:
+                                knowledge_store.record_decision(
+                                    "Review rejection overridden by human "
+                                    "(--interactive)"
+                                )
+                            break
+                        raise OrchestrationAborted(
+                            "Aborted after review rejection"
+                        )
 
                 if gate_passed:
                     events.publish(EventType.PROJECT_COMPLETED)
+                    if knowledge_store is not None:
+                        knowledge_store.record_decision("Project marked complete.")
                 else:
                     exit_code = 1
-            else:
-                from olive.state.task_state import TaskStatus
-
-                blocked = [
-                    task_id
-                    for task_id, task_status in orchestrator.statuses.items()
-                    if task_status == TaskStatus.PENDING
-                ]
-                status(
-                    f"\nOrchestration finished with failures: "
-                    f"{sorted(orchestrator.failed)}"
-                )
-                if blocked:
-                    status(f"Blocked (never attempted): {sorted(blocked)}")
-                exit_code = 1
 
         if args.events_log:
             with args.events_log.open("w", encoding="utf-8") as handle:
