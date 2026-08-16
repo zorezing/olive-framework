@@ -189,30 +189,31 @@ def test_web_fetch_disabled_by_default(tmp_path):
 def test_web_fetch_disabled_does_not_touch_mcp(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(
-        "olive.workflow.mcp_tools.build_web_fetch_tools",
-        lambda *a, **k: called.append(True) or [],
+        "olive.workflow.mcp_tools.build_web_fetch_mcp_config",
+        lambda *a, **k: called.append(True) or {},
     )
 
-    OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=False)
+    reviewer = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=False)
 
     assert called == []
+    assert reviewer.mcp_config == {}
 
 
-def test_web_fetch_enabled_extends_tools(tmp_path, monkeypatch):
-    fake_tool = object()
+def test_web_fetch_enabled_sets_mcp_config(tmp_path, monkeypatch):
+    fake_config = {"fetch": object()}
     monkeypatch.setattr(
-        "olive.workflow.mcp_tools.build_web_fetch_tools",
-        lambda *a, **k: [fake_tool],
+        "olive.workflow.mcp_tools.build_web_fetch_mcp_config",
+        lambda *a, **k: fake_config,
     )
 
     reviewer = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=True)
 
-    assert fake_tool in reviewer.tools
+    assert reviewer.mcp_config == fake_config
 
 
 def test_web_fetch_system_prompt_mentions_fetch_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "olive.workflow.mcp_tools.build_web_fetch_tools", lambda *a, **k: []
+        "olive.workflow.mcp_tools.build_web_fetch_mcp_config", lambda *a, **k: {}
     )
 
     enabled = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=True)
@@ -220,3 +221,20 @@ def test_web_fetch_system_prompt_mentions_fetch_when_enabled(tmp_path, monkeypat
 
     assert "you have a `fetch` tool" in enabled._system_prompt().lower()
     assert "you have a `fetch` tool" not in disabled._system_prompt().lower()
+
+
+def test_web_fetch_agent_actually_constructs(tmp_path):
+    # Regression test: the real build_web_fetch_mcp_config() (unmocked) must
+    # produce something Agent(mcp_config=...) actually accepts -- Agent
+    # validates eagerly at construction and needs no live network connection
+    # to do so, so this catches a tools/mcp_config type mismatch offline.
+    from openhands.sdk import Agent
+
+    reviewer = OpenHandsReviewer(workspace=tmp_path, enable_web_fetch=True)
+
+    Agent(
+        llm=reviewer.llm,
+        tools=reviewer.tools,
+        mcp_config=reviewer.mcp_config,
+        system_prompt=reviewer._system_prompt(),
+    )

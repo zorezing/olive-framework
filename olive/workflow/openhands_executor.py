@@ -33,15 +33,17 @@ class OpenHandsExecutor(Executor):
             enable_sub_agents=False,
         )
 
+        self.mcp_config = {}
         if enable_web_fetch:
-            from olive.workflow.mcp_tools import build_web_fetch_tools
+            from olive.workflow.mcp_tools import build_web_fetch_mcp_config
 
-            self.tools = list(self.tools) + build_web_fetch_tools()
+            self.mcp_config = build_web_fetch_mcp_config()
 
     def execute(self, task: Task) -> TaskExecution:
         agent = Agent(
             llm=self.llm,
             tools=self.tools,
+            mcp_config=self.mcp_config,
             system_prompt=self._system_prompt(),
         )
 

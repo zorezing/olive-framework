@@ -201,6 +201,29 @@ case, now confirmed for the one scenario `SimpleReviewer` structurally
 can't cover. If you need `--review-url`, expect to supervise it closely
 or verify the result yourself -- don't trust it unattended.
 
+**`--web-fetch` gives the `openhands` executor/reviewer a narrower,
+single-call `fetch` MCP tool** (the official `mcp-server-fetch`, via
+`uvx`) instead of full interactive browsing, on the theory that a
+"retrieve this URL as text" action is closer to the single-completion
+pattern that's proven reliable than to multi-step browser navigation.
+MCP tools are wired through OpenHands' own `Agent(mcp_config=...)`
+field (`olive/workflow/mcp_tools.py`), not appended to the plain `tools`
+list -- an earlier version of this code did that and crashed at `Agent`
+construction, since the SDK's `tools` field only accepts `Tool` specs,
+not live MCP tool objects. Live-tested twice against `qwen3:8b`: **the
+`fetch` call itself works** -- it reaches the real MCP server and
+returns real page content (confirmed against `https://example.com`) --
+but in both runs the model treated the fetched text as something to
+summarize back conversationally ("Let me know if you'd like to test
+something else!") and stopped, rather than continuing on to a second,
+unrelated tool call the task also required, even with an explicit
+numbered-steps prompt telling it not to stop. This is the same
+step-continuation failure mode already documented above for the
+reviewer, now also observed on the executor path when a tool
+observation contains natural-language content. Prefer tasks where
+fetching *is* the whole task (or the only remaining step) over tasks
+that need a fetch followed by unrelated work in the same turn.
+
 Failure handling: a failing task is retried up to `--max-retries` times,
 and a task that ultimately fails no longer aborts the whole run --
 independent tasks keep going, only tasks that (transitively) depend on the
@@ -337,6 +360,11 @@ olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
   application, for the `openhands` reviewer to visit with its browser
   tool and screenshot before forming a verdict. Requires `--reviewer
   openhands` (`ollama` can't browse).
+- `--web-fetch` -- give `--executor openhands` / `--reviewer openhands` a
+  `fetch` MCP tool that retrieves a URL's content from the internet as
+  markdown (requires `uv` installed and network access). No-op for the
+  `fake` executor / `mock`/`ollama` reviewers. See Status above for
+  live-tested reliability caveats.
 - `--max-retries N` (default `0`) -- retry a failing task up to N times
   before giving up on it. Independent tasks still run either way; only
   tasks depending on a permanently failed one are blocked.
