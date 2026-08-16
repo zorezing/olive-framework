@@ -55,6 +55,7 @@ def build_reviewer(
     ollama_url: str,
     model: str,
     review_url: str | None,
+    ollama_timeout: int,
     persistence_dir: Path | None = None,
 ):
     if name == "none":
@@ -64,6 +65,16 @@ def build_reviewer(
         from olive.workflow.mock_reviewer import MockReviewer
 
         return MockReviewer()
+
+    if name == "ollama":
+        from olive.workflow.ollama_client import OllamaClient
+        from olive.workflow.simple_reviewer import SimpleReviewer
+
+        return SimpleReviewer(
+            workspace=workspace,
+            client=OllamaClient(base_url=ollama_url, timeout=ollama_timeout),
+            model=model,
+        )
 
     if name == "openhands":
         from olive.workflow.openhands_reviewer import OpenHandsReviewer
@@ -188,20 +199,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--reviewer",
-        choices=["none", "mock", "openhands"],
+        choices=["none", "mock", "ollama", "openhands"],
         default="none",
         help=(
             "Reviewer agent to run once tasks and CI pass (default: none, "
-            "i.e. skip review)"
+            "i.e. skip review). 'ollama' reads workspace files itself and "
+            "asks a single Ollama chat completion for a verdict -- no "
+            "agentic tool use, live-verified reliable. 'openhands' runs a "
+            "real agent with browser tool access; only actually needed "
+            "for --review-url (live-tested unreliable for source-only "
+            "review with qwen3:8b -- see README). Prefer 'ollama' unless "
+            "you're passing --review-url."
         ),
     )
     parser.add_argument(
         "--review-model",
         default="qwen3:8b",
         help=(
-            "Ollama model used by the openhands reviewer (default: qwen3:8b "
-            "-- the only model verified to make reliable OpenHands tool "
-            "calls in this project so far; see README)"
+            "Ollama model used by the reviewer (default: qwen3:8b -- the "
+            "only model verified reliable for this project's local-model "
+            "roles so far; see README)"
         ),
     )
     parser.add_argument(
@@ -209,7 +226,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "URL of a running instance of the generated application, for "
-            "the openhands reviewer to visit with its browser tool"
+            "the openhands reviewer to visit with its browser tool "
+            "(requires --reviewer openhands; 'ollama' cannot browse)"
         ),
     )
     parser.add_argument(
@@ -224,10 +242,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume and not args.state_dir:
         parser.error("--resume requires --state-dir")
 
+    if args.review_url and args.reviewer != "openhands":
+        parser.error("--review-url requires --reviewer openhands")
+
     needs_ollama = (
         args.planner == "deepseek"
         or (not args.dry_run and args.executor == "openhands")
-        or (not args.dry_run and args.reviewer == "openhands")
+        or (not args.dry_run and args.reviewer in ("ollama", "openhands"))
     )
 
     if needs_ollama:
@@ -371,6 +392,7 @@ def _execute(args: argparse.Namespace) -> int:
                         args.ollama_url,
                         args.review_model,
                         args.review_url,
+                        args.ollama_timeout,
                         persistence_dir=review_persistence_dir,
                     )
 

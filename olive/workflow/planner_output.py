@@ -1,13 +1,8 @@
-import json
-import re
 from dataclasses import dataclass
 
 from olive.state.task import Task
 from olive.state.task_graph import TaskGraph
-
-
-_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-_FENCED_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+from olive.workflow.json_extraction import extract_json
 
 
 @dataclass
@@ -20,50 +15,13 @@ class PlannerOutput:
         return TaskGraph(tasks=self.tasks)
 
 
-def _extract_json(raw: str) -> dict:
-    """Best-effort extraction of a JSON object from a planner response.
-
-    Reasoning models routinely wrap their answer in <think> blocks,
-    markdown code fences, or trailing commentary instead of returning
-    bare JSON, even when the request explicitly asks for JSON-only
-    output (observed live with deepseek-r1:8b through Ollama).
-    """
-
-    candidates = [raw]
-
-    without_think = _THINK_BLOCK.sub("", raw).strip()
-    if without_think and without_think != raw:
-        candidates.append(without_think)
-
-    fenced = _FENCED_BLOCK.search(without_think or raw)
-    if fenced:
-        candidates.append(fenced.group(1).strip())
-
-    for candidate in candidates:
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
-
-    # Last resort: parse the first balanced JSON value found, ignoring
-    # any trailing commentary the model kept generating afterward.
-    for candidate in candidates:
-        start = candidate.find("{")
-        if start == -1:
-            continue
-        try:
-            value, _ = json.JSONDecoder().raw_decode(candidate[start:])
-            return value
-        except json.JSONDecodeError:
-            continue
-
-    raise ValueError("Planner output is not valid JSON")
-
-
 def parse_planner_output(raw: str) -> PlannerOutput:
     """Parse and validate structured planner output."""
 
-    data = _extract_json(raw)
+    try:
+        data = extract_json(raw)
+    except ValueError as exc:
+        raise ValueError("Planner output is not valid JSON") from exc
 
     if not isinstance(data, dict):
         raise ValueError(

@@ -321,3 +321,33 @@ def test_keyboard_interrupt_mentions_resume_with_state_dir(tmp_path, capsys):
 
     assert exit_code == 130
     assert "--resume" in captured.out
+
+
+def test_ollama_reviewer_requires_reachable_ollama():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                str(PROJECT_FILE),
+                "--reviewer",
+                "ollama",
+                "--ollama-url",
+                "http://localhost:1",
+            ]
+        )
+
+
+def test_review_url_requires_openhands_reviewer():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                str(PROJECT_FILE),
+                "--reviewer",
+                "ollama",
+                "--review-url",
+                "http://localhost:3000",
+            ]
+        )

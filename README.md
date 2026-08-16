@@ -32,9 +32,12 @@ olive/
   workflow/
     planner.py / mock_planner.py / deepseek_planner.py
     executor.py / fake_executor.py / openhands_executor.py
-    reviewer.py / mock_reviewer.py / openhands_reviewer.py
+    reviewer.py / mock_reviewer.py / simple_reviewer.py /
+      openhands_reviewer.py
     ollama_client.py           Minimal Ollama HTTP client
     planner_output.py          Planner JSON -> TaskGraph
+    json_extraction.py         Shared JSON-from-chat-response extraction
+                               (fenced blocks, <think> stripping, etc.)
     prompts.py
 
 projects/demo/PROJECT.md      Example project spec used by the test suite
@@ -83,12 +86,44 @@ deepseek-r1:8b instead produced a hard 500 from Ollama's own server. That
 setting (`json_mode`) is still exposed on `OllamaClient`/`DeepSeekPlanner`
 in case a different model needs it, but stays on by default.)
 
-The OpenHands reviewer's `browser_tool_set` availability is confirmed
-offline; a full live visual-review run (navigating a real running app and
-screenshotting it) hasn't been exercised yet since there's no generated
-application in this repo to point it at. Given the planner findings above,
-`--review-model` already defaulting to `qwen3:8b` (not `deepseek-r1:8b`)
-looks like the right call for the same reliability reasons.
+**The reviewer went through the same investigation, with a different
+conclusion.** `OpenHandsReviewer` (agentic, tool-calling, browser-capable)
+was tested live five times against a minimal real workspace, with
+`qwen3:8b`. Every attempt failed to produce `review.json`, via three
+distinct failure modes across the iterations:
+1. Given a choice between `terminal` and `file_editor`, it picked
+   `file_editor` and never found the right parameter name for the
+   `create` command (`file_text`, not the `content`/`file_path` it kept
+   guessing) across 4 tries, then gave up.
+2. Steered to `terminal`-only, it skipped tool calls entirely and
+   reasoned hypothetically ("let's assume hello.py exists... this is a
+   simulation") instead of actually inspecting anything.
+3. Steered further with an explicit numbered-steps prompt plus retries,
+   it reliably called one tool correctly (e.g. `Get-ChildItem`), then
+   stopped and asked "would you like me to review the files?" -- treating
+   an autonomous task as an interactive chat. This exact pattern repeated
+   in **3 independent retry attempts within the same run**, and survived
+   adding explicit "you are autonomous, no one will respond, never ask
+   permission" framing at both the system-prompt and task-prompt level.
+   That's a real capability limit for this model at this size on
+   open-ended multi-step agentic tasks, not a wording problem.
+
+The fix was architectural, not more prompt tuning: **`SimpleReviewer`**
+reads the workspace's files itself in plain Python and asks a single
+bounded Ollama chat completion for a JSON verdict -- exactly the pattern
+already proven reliable for the planner, with no agentic tool-calling loop
+for the model to get lost in. Live-tested twice against real workspaces
+(one satisfying the requirements, one deliberately violating one) and
+correctly approved/rejected both, with an accurate, specific finding in
+the rejection case, zero retries needed either time. **`--reviewer
+ollama` (`SimpleReviewer`) is the reliable, recommended default now.**
+`OpenHandsReviewer` remains available as `--reviewer openhands` and is
+still the only option when `--review-url` is given -- there's no way
+around needing an agent with browser tools for actually visiting and
+screenshotting a running application, and that specific browser-driving
+path hasn't been live-tested yet (there's no generated application in
+this repo to point it at). Given the pattern above, expect the same
+kind of agentic unreliability there until proven otherwise.
 
 Failure handling: a failing task is retried up to `--max-retries` times,
 and a task that ultimately fails no longer aborts the whole run --
@@ -189,23 +224,29 @@ olive path/to/PROJECT.md --executor openhands --state-dir path/to/PROJECT/.olive
   CI command has passed (or no `--ci-command` was given at all).
 - `--ci-timeout SECONDS` (default `600`) -- per-command timeout for
   `--ci-command`.
-- `--reviewer {none,mock,openhands}` (default `none`) -- once tasks and CI
-  pass, run this reviewer as the final completion gate. `openhands` uses a
-  real OpenHands agent with its browser tool enabled to inspect the
-  workspace (and, if `--review-url` is given, a running instance of the
-  app) against the project's requirements/constraints, then writes
-  `review.json` + `review.md` to the workspace; Olive reads `review.json`
-  back for the pass/fail verdict. If the reviewer doesn't produce a valid
-  `review.json`, the review is treated as failed (fail closed, not open).
+- `--reviewer {none,mock,ollama,openhands}` (default `none`) -- once tasks
+  and CI pass, run this reviewer as the final completion gate.
+  - `ollama` (**recommended**, live-verified reliable): reads the
+    workspace's files itself and asks one bounded Ollama chat completion
+    for a JSON verdict. No agentic tool use, no `openhands` dependency.
+  - `openhands`: a real OpenHands agent with its browser tool enabled,
+    for when `--review-url` is given (inspects a running app, not just
+    source). Live-tested *unreliable* for source-only review with
+    `qwen3:8b` -- see Status above -- so only reach for this when you
+    actually need `--review-url`.
+  - Either way: the reviewer writes/produces a verdict with `approved`,
+    `findings` (each with a `blocking` flag), and `notes`. If it fails to
+    produce a valid verdict (missing/malformed `review.json` for
+    `openhands`, or repeated bad output for `ollama`), the review is
+    treated as failed -- fail closed, not open.
 - `--review-model` (default `qwen3:8b`) -- the project spec assumed
   DeepSeek would fill this role, but only `qwen3:8b` has actually been
-  verified to make reliable OpenHands tool calls in this project's
-  history (see `FORGE_PROJECT_SPEC.md` sec 13), so that's the default
-  here until DeepSeek's OpenHands tool-calling reliability is separately
-  checked.
+  verified reliable for this project's local-model roles (planning,
+  OpenHands tool-calling, review) -- see Status above.
 - `--review-url URL` -- URL of a running instance of the generated
   application, for the `openhands` reviewer to visit with its browser
-  tool and screenshot before forming a verdict.
+  tool and screenshot before forming a verdict. Requires `--reviewer
+  openhands` (`ollama` can't browse).
 - `--max-retries N` (default `0`) -- retry a failing task up to N times
   before giving up on it. Independent tasks still run either way; only
   tasks depending on a permanently failed one are blocked.
