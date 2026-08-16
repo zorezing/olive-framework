@@ -87,7 +87,26 @@ and an `olive` CLI that chains all of it together. Ported from an earlier
 local prototype and rebranded.
 
 The Qwen/OpenHands executor path has been verified end-to-end against a real
-local Ollama server on this machine (see `tests/test_real_orchestration.py`).
+local Ollama server on this machine (see `tests/test_real_orchestration.py`),
+and re-confirmed with no regression after later prompt changes (both tests
+still pass, ~90s-3min each). **But reliability here is task-granularity
+dependent.** Every executor test that's passed gave the model a single,
+fully-specified task: "create this exact file with this exact content." A
+live full-pipeline run (5-task plan for a small calculator CLI, one task
+per file/concern) got stuck instead: given an open-ended task ("implement
+calculator.py") that requires the model to *decide* what code to write, not
+just transcribe given content, `qwen3:8b` spent 10+ minutes reasoning in
+circles -- hallucinating a "user" conversation that never happened,
+marking a `task_tracker` entry "done" without writing any code, generally
+losing the thread. This is a different, deeper failure mode than the
+planner/reviewer issues above (which had non-agentic fixes); the executor
+fundamentally needs sustained multi-step agentic tool use, and that's
+where this model's reliability ceiling is on this hardware. If you hit
+this: keep tasks maximally granular in `PROJECT.md` (spell out exact
+file/function boundaries rather than "implement X"), use `--max-retries`
+and `--state-dir`/`--resume` so a stuck task doesn't lose everything else,
+and expect to supervise/intervene on genuinely open-ended implementation
+tasks rather than trusting a fully unattended run.
 
 The DeepSeek/Ollama planner path (`--planner deepseek`) is now **verified
 end-to-end live**, planning the demo project into a clean, valid 16-task
