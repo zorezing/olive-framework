@@ -55,29 +55,40 @@ local prototype and rebranded.
 The Qwen/OpenHands executor path has been verified end-to-end against a real
 local Ollama server on this machine (see `tests/test_real_orchestration.py`).
 
-The DeepSeek/Ollama planner path is implemented and thoroughly unit-tested
-(fenced/think-wrapped JSON extraction, duplicate-ID and other validation
-failures, network/HTTP-level retries), but has not yet completed a full
-successful live run on this machine. Across several live attempts against
-`deepseek-r1:8b` on this machine's 6GB-VRAM GPU:
-- with `format="json"` (the default): one attempt timed out at 600s, one
-  attempt returned a response after ~15 min that was valid-ish (markdown-
-  fenced, contained a duplicate task ID) -- exactly the cases the parser
-  and retry logic above were built to handle -- and one attempt timed out
-  at 1800s with no response at all.
-- with `format="json"` disabled (tried as a fix for the slowness): Ollama's
-  server itself returned a 500 ("The model produced output that does not
-  match the expected peg-native format") -- a template mismatch specific
-  to this Ollama/model combination, not a client-side setting. Reverted;
-  `format="json"` is the only mode that has ever produced usable content.
+The DeepSeek/Ollama planner path (`--planner deepseek`) is now **verified
+end-to-end live**, planning the demo project into a clean, valid 16-task
+graph through the real `olive` CLI. Getting there took real investigation:
+`deepseek-r1:8b`, the model the project spec originally envisioned for
+this role, turned out to be unreliable on this machine's 6GB-VRAM GPU --
+across four live attempts it either timed out (600s, then 1800s) or
+returned malformed content (a duplicate task ID) after ~15 minutes. Root
+cause, confirmed by timing an identical trivial prompt on both models:
+deepseek-r1:8b generates far more reasoning tokens (335 for the prompt
+"ping" alone) at a similar tokens/sec to qwen3:8b, so its wall-clock cost
+scales up badly. qwen3:8b -- already the only model verified reliable for
+OpenHands tool-calling in this project (sec 13) -- was tested against the
+identical real planner prompt and returned a valid plan in ~3m15s with no
+retries needed. **`qwen3:8b` is therefore the default `--planner-model`**;
+`deepseek-r1:8b` remains available by passing it explicitly, for hardware
+that can sustain higher tokens/sec. `DeepSeekPlanner` also now caps
+generation length (`num_predict`, default 4096) to bound worst-case
+latency, and retries cover network/HTTP failures (timeouts, 500s) as well
+as bad content, not just JSON/validation errors as before.
 
-In short: the code path is believed correct and defensively handles every
-failure mode observed so far, but `deepseek-r1:8b` on this hardware is
-slow and inconsistent enough that a clean end-to-end confirmation is still
-pending. The OpenHands reviewer's `browser_tool_set` availability is
-confirmed offline; a full live visual-review run (navigating a real running
-app and screenshotting it) hasn't been exercised yet since there's no
-generated application in this repo to point it at.
+(A parallel hypothesis -- that Ollama's `format="json"` grammar constraint
+was itself the source of the slowness -- was tested and disproven: Ollama
+0.32.6 already separates a model's `<think>` trace from its constrained
+`content` correctly, confirmed live, and disabling `format="json"` for
+deepseek-r1:8b instead produced a hard 500 from Ollama's own server. That
+setting (`json_mode`) is still exposed on `OllamaClient`/`DeepSeekPlanner`
+in case a different model needs it, but stays on by default.)
+
+The OpenHands reviewer's `browser_tool_set` availability is confirmed
+offline; a full live visual-review run (navigating a real running app and
+screenshotting it) hasn't been exercised yet since there's no generated
+application in this repo to point it at. Given the planner findings above,
+`--review-model` already defaulting to `qwen3:8b` (not `deepseek-r1:8b`)
+looks like the right call for the same reliability reasons.
 
 Failure handling: a failing task is retried up to `--max-retries` times,
 and a task that ultimately fails no longer aborts the whole run --
@@ -137,14 +148,19 @@ olive path/to/PROJECT.md --planner deepseek --executor openhands
 Flags:
 
 - `--planner {mock,deepseek}` (default `mock`) -- `mock` returns a fixed
-  3-task plan; `deepseek` calls a local DeepSeek model through Ollama.
+  3-task plan; `deepseek` calls a local model through Ollama (despite the
+  name, defaults to `qwen3:8b` -- see Status above).
 - `--executor {fake,openhands}` (default `fake`) -- `fake` marks every task
   completed without touching the filesystem; `openhands` runs a real
   OpenHands agent (Qwen by default) against the workspace.
 - `--workspace PATH` -- execution workspace for the `openhands` executor
   (default: the PROJECT.md's parent directory).
-- `--planner-model`, `--coder-model`, `--ollama-url` -- override the
-  defaults (`deepseek-r1:8b`, `qwen3:8b`, `http://localhost:11434`).
+- `--planner-model` (default `qwen3:8b`), `--coder-model` (default
+  `qwen3:8b`), `--ollama-url` (default `http://localhost:11434`) -- model/
+  endpoint overrides. Pass `--planner-model deepseek-r1:8b` to use the
+  model the spec originally envisioned for planning.
+- `--ollama-timeout SECONDS` (default `900`) -- per-request timeout for
+  the deepseek planner's Ollama calls.
 - `--ui` -- show a live terminal dashboard (project/goal, task table with
   live status, current task, recent event log) instead of plain log lines.
 - `--events-log PATH` -- write the full structured event log as JSON lines

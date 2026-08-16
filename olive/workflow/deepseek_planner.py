@@ -9,32 +9,53 @@ from olive.workflow.prompts import PLANNER_SYSTEM_PROMPT
 
 
 class DeepSeekPlanner(Planner):
-    """Planner powered by a local DeepSeek model through Ollama.
+    """Chat-completion-based planner, driven by a local model through
+    Ollama. Named for the model the project spec originally envisioned
+    for this role, but the model is fully configurable -- and, based on
+    live testing, deepseek-r1:8b is *not* the reliable choice on modest
+    hardware (see below), so it is no longer the default.
+
+    Live reliability findings on this project's development machine
+    (RTX 4050 6GB, per FORGE_PROJECT_SPEC.md secs 17-19):
+
+    - deepseek-r1:8b generated 335 reasoning tokens for the trivial
+      prompt "ping" alone, at roughly 10 tokens/sec. On the real planner
+      prompt it either took ~15 minutes and produced content with a
+      duplicate task ID, or did not respond within 30 minutes at all,
+      across repeated attempts.
+    - qwen3:8b -- already the only model verified reliable for OpenHands
+      tool-calling in this project (FORGE_PROJECT_SPEC.md sec 13) -- was
+      tested against the identical real planner prompt and returned a
+      clean, fully valid 15-task plan in ~3m15s with zero retries needed.
+
+    qwen3:8b is therefore the default model here. deepseek-r1:8b remains
+    available by passing model="deepseek-r1:8b" explicitly, for anyone
+    running on hardware that can push tokens/sec high enough to make its
+    much longer reasoning traces practical.
 
     json_mode note: disabling Ollama's format="json" was tried live as a
-    fix for deepseek-r1:8b's slowness, on the theory that grammar-
-    constrained decoding was fighting the model's own <think> tokens.
-    That theory was wrong: without format="json", this Ollama/model
-    combination instead returns a hard 500 ("The model produced output
-    that does not match the expected peg-native format") -- a
-    server-side template mismatch, not a client-side setting. format="json"
-    (the default here) is the only mode that has ever produced usable
-    output live, even though it's slow, so it stays the default.
-    json_mode is still exposed in case a different Ollama version or
-    model doesn't have this quirk.
+    separate fix for the slowness, on the theory that grammar-constrained
+    decoding was fighting <think> tokens. That theory was wrong: Ollama
+    0.32.6 already separates thinking from content correctly even with
+    format="json" (confirmed live), and disabling it for deepseek-r1:8b
+    instead produced a hard 500 ("output does not match the expected
+    peg-native format") -- a server-side template mismatch. format="json"
+    stays on by default.
     """
 
     def __init__(
         self,
         client: OllamaClient | None = None,
-        model: str = "deepseek-r1:8b",
+        model: str = "qwen3:8b",
         max_attempts: int = 3,
         json_mode: bool = True,
+        num_predict: int | None = 4096,
     ):
         self.client = client or OllamaClient()
         self.model = model
         self.max_attempts = max_attempts
         self.json_mode = json_mode
+        self.num_predict = num_predict
 
     def create_plan(self, project: Project) -> TaskGraph:
         prompt = self._build_prompt(project)
@@ -48,6 +69,7 @@ class DeepSeekPlanner(Planner):
                     system=PLANNER_SYSTEM_PROMPT,
                     prompt=prompt,
                     json_mode=self.json_mode,
+                    num_predict=self.num_predict,
                 )
 
                 output = parse_planner_output(raw_output)

@@ -7,7 +7,7 @@ class OllamaClient:
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        timeout: int = 1800,
+        timeout: int = 900,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -29,17 +29,27 @@ class OllamaClient:
         system: str,
         prompt: str,
         json_mode: bool = True,
+        num_predict: int | None = None,
     ) -> str:
         """Send a chat completion request.
 
         ``json_mode`` requests Ollama's grammar-constrained JSON output
-        (``format: "json"``). This is reliable for well-behaved models,
-        but was observed live to make deepseek-r1:8b dramatically slower
-        (or not respond within an hour at all) -- the constrained decoder
-        appears to fight the model's own <think> reasoning tokens, which
-        don't fit a strict JSON grammar. Callers with their own robust
-        extraction (see olive.workflow.planner_output) can set this to
-        False and let the model think freely.
+        (``format: "json"``). Ollama 0.32.6 correctly separates a
+        reasoning model's <think> trace into a distinct ``thinking``
+        field from the constrained ``content`` field (confirmed live with
+        qwen3:8b), so this is *not* the source of reasoning-model
+        slowness some earlier investigation suspected. Disabling it for
+        deepseek-r1:8b specifically was tried and made things worse (a
+        hard 500 from Ollama) -- leave this on unless you've verified
+        otherwise for your model.
+
+        ``num_predict`` caps the maximum number of tokens generated
+        (Ollama's ``options.num_predict``), bounding worst-case latency.
+        Reasoning models scale their <think> length with task difficulty
+        and can otherwise run for a very long time on modest hardware --
+        observed live with deepseek-r1:8b generating 335 tokens of
+        reasoning for the prompt "ping" alone. Left unset (no cap) by
+        default; callers doing anything latency-sensitive should set one.
         """
 
         payload = {
@@ -59,6 +69,9 @@ class OllamaClient:
 
         if json_mode:
             payload["format"] = "json"
+
+        if num_predict is not None:
+            payload["options"] = {"num_predict": num_predict}
 
         response = requests.post(
             f"{self.base_url}/api/chat",

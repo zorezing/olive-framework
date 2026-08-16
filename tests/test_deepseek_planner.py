@@ -8,11 +8,12 @@ PROJECT_FILE = Path("projects/demo/PROJECT.md")
 
 
 class FakeOllamaClient:
-    def chat(self, model, system, prompt, json_mode=True):
-        assert model == "deepseek-r1:8b"
+    def chat(self, model, system, prompt, json_mode=True, num_predict=None):
+        assert model == "qwen3:8b"
         assert "local network" in prompt.lower()
         assert "network status dashboard" in prompt.lower()
         assert json_mode is True
+        assert num_predict == 4096
 
         return """
         {
@@ -100,7 +101,7 @@ class FlakyOllamaClient:
         self.bad_responses = list(bad_responses)
         self.calls = 0
 
-    def chat(self, model, system, prompt, json_mode=True):
+    def chat(self, model, system, prompt, json_mode=True, num_predict=None):
         assert json_mode is True
         self.calls += 1
 
@@ -162,6 +163,32 @@ def test_json_mode_can_be_overridden():
     assert planner.json_mode is False
 
 
+def test_model_defaults_to_qwen3_8b():
+    # qwen3:8b, not deepseek-r1:8b, is the default -- see class docstring
+    # for the live-testing evidence behind this.
+    planner = DeepSeekPlanner(client=FakeOllamaClient())
+
+    assert planner.model == "qwen3:8b"
+
+
+def test_model_can_be_overridden_to_deepseek():
+    planner = DeepSeekPlanner(client=FakeOllamaClient(), model="deepseek-r1:8b")
+
+    assert planner.model == "deepseek-r1:8b"
+
+
+def test_num_predict_defaults_to_4096():
+    planner = DeepSeekPlanner(client=FakeOllamaClient())
+
+    assert planner.num_predict == 4096
+
+
+def test_num_predict_can_be_overridden():
+    planner = DeepSeekPlanner(client=FakeOllamaClient(), num_predict=None)
+
+    assert planner.num_predict is None
+
+
 class RaisingThenValidOllamaClient:
     """Raises a network-level exception for the first N calls, then
     returns a valid plan. Verifies retries also cover transient HTTP/
@@ -173,7 +200,7 @@ class RaisingThenValidOllamaClient:
         self.exceptions = list(exceptions)
         self.calls = 0
 
-    def chat(self, model, system, prompt, json_mode=True):
+    def chat(self, model, system, prompt, json_mode=True, num_predict=None):
         self.calls += 1
 
         if self.exceptions:

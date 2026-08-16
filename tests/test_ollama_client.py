@@ -94,3 +94,33 @@ def test_chat_json_mode_false_omits_format():
 
         _, kwargs = mock_post.call_args
         assert "format" not in kwargs["json"]
+
+
+def test_chat_without_num_predict_omits_options():
+    client = OllamaClient()
+
+    with patch("olive.workflow.ollama_client.requests.post") as mock_post:
+        mock_post.return_value = _mock_chat_response()
+
+        client.chat(model="m", system="s", prompt="p")
+
+        _, kwargs = mock_post.call_args
+        assert "options" not in kwargs["json"]
+
+
+def test_chat_with_num_predict_sets_options():
+    client = OllamaClient()
+
+    with patch("olive.workflow.ollama_client.requests.post") as mock_post:
+        mock_post.return_value = _mock_chat_response()
+
+        client.chat(model="m", system="s", prompt="p", num_predict=4096)
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["options"] == {"num_predict": 4096}
+
+
+def test_default_timeout_is_900():
+    client = OllamaClient()
+
+    assert client.timeout == 900

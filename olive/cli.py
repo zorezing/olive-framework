@@ -10,7 +10,7 @@ from olive.workflow.fake_executor import FakeExecutor
 from olive.workflow.mock_planner import MockPlanner
 
 
-def build_planner(name: str, ollama_url: str, model: str):
+def build_planner(name: str, ollama_url: str, model: str, ollama_timeout: int):
     if name == "mock":
         return MockPlanner()
 
@@ -19,7 +19,7 @@ def build_planner(name: str, ollama_url: str, model: str):
         from olive.workflow.ollama_client import OllamaClient
 
         return DeepSeekPlanner(
-            client=OllamaClient(base_url=ollama_url),
+            client=OllamaClient(base_url=ollama_url, timeout=ollama_timeout),
             model=model,
         )
 
@@ -112,8 +112,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--planner-model",
-        default="deepseek-r1:8b",
-        help="Ollama model used by the deepseek planner",
+        default="qwen3:8b",
+        help=(
+            "Ollama model used by the deepseek planner (default: qwen3:8b "
+            "-- live-tested faster and more reliable than deepseek-r1:8b "
+            "on modest hardware; see README/DeepSeekPlanner docstring). "
+            "Pass deepseek-r1:8b explicitly to use the model the project "
+            "spec originally envisioned for this role."
+        ),
     )
     parser.add_argument(
         "--coder-model",
@@ -124,6 +130,15 @@ def main(argv: list[str] | None = None) -> int:
         "--ollama-url",
         default="http://localhost:11434",
         help="Base URL of the local Ollama server",
+    )
+    parser.add_argument(
+        "--ollama-timeout",
+        type=int,
+        default=900,
+        help=(
+            "Per-request timeout in seconds for the deepseek planner's "
+            "Ollama calls (default: 900)"
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -267,7 +282,9 @@ def _execute(args: argparse.Namespace) -> int:
         status(f"Goal: {project.goal}")
 
         events.publish(EventType.PLANNER_STARTED, planner=args.planner)
-        planner = build_planner(args.planner, args.ollama_url, args.planner_model)
+        planner = build_planner(
+            args.planner, args.ollama_url, args.planner_model, args.ollama_timeout
+        )
         graph = planner.create_plan(project)
         graph.validate()
 
